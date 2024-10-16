@@ -27,25 +27,25 @@ class EMSequenceDataset(Dataset):
             image = np.load(file, mmap_mode='r')
             self.images.append(image)
 
-    def __len__() -> int:
+    def __len__(self) -> int:
         return 1000000
 
     def __getitem__(self, index: int) -> torch.Tensor:
         image_idx = np.random.randint(len(self.images))
         img = self.images[image_idx]
         h, w = img.shape
-        start_idx = np.array([
-            np.random.randint(w), 
-            np.random.randint(h)])
         
         # Generate eye trace and make sure it's within frame
         while True:
+            start_idx = np.array([
+                np.random.randint(w), 
+                np.random.randint(h)])
             eye_deg = utils.gen_em_sequence(self.n_drift_pad, self.fs, 20)
             eye_px = np.astype(eye_deg[0] * self.ppd, np.int64)
             roi = eye_px.T + start_idx[:,np.newaxis]
 
-            if np.all(np.max(roi + self.roi_size // 2, axis=1) < (w, h)) and np.all(np.min(roi - self.roi_size // 2, axis=1) >= 0):
-                break;
+            if np.all((np.max(roi , axis=1) + self.roi_size // 2) < (w, h)) and np.all((np.min(roi , axis=1) - self.roi_size // 2) >= 0):
+                break
 
         seq = np.zeros((roi.shape[1], self.roi_size, self.roi_size), np.float32)
         for t in range(0, seq.shape[0]):

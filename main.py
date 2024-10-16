@@ -3,6 +3,7 @@ import numpy as np
 import torch.utils
 import torch.utils.data
 import torch.utils.data.dataloader
+from torch.utils.tensorboard import SummaryWriter
 from model import Encoder
 import tqdm
 import utils
@@ -12,23 +13,29 @@ from data import EMSequenceDataset
 
 
 def main():
+    writer = SummaryWriter("run", "test run")
+    # writer.add_figure("Loss/")
     model = Encoder()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device=device)
-
-    loss_fn = torch.nn.MSELoss()
+    writer.add_images("Kernels/spatial", 
+                      model.spatial_kernels.unsqueeze(1).view(-1, 1, model.kernel_size, model.kernel_size),
+                      1,
+                      dataformats="NCWH")
     
-    # for t in tqdm.tqdm(np.arange(100), "Test speed"):
-    #     model.forward(input)
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    # model.to(device=device)
 
+    # model(torch.zeros(128, 32, 32).to(device=device))
 
-    dataset = EMSequenceDataset(roi_size=64)
-    training_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
+    # loss_fn = torch.nn.MSELoss()
+    
+    # dataset = EMSequenceDataset(roi_size=64)
+    # training_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
 
-    seq = dataset[0]
-
-    utils.implay(seq.permute(1, 2, 0))
-
+    # for i in range(100):
+        # seq = dataset[np.random.randint(100000)]
+        # utils.implay(seq.permute(1, 2, 0))
+        
+    writer.close()
 
     return 0
 
