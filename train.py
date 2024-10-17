@@ -12,8 +12,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 
-def train():
-    
+def main():
     kernel_size = 32
     kernel_length = 32
     n_kernels = 32
@@ -71,11 +70,17 @@ def train():
         optimizer.zero_grad()
 
         # Make predictions for this batch
-        out = model(video)
+        out, fr = model(video)
 
         # Compute the loss and its gradients
-        loss = loss_fn(out, video[:,(kernel_length//2):(-kernel_length//2+1),:,:])
+        # loss = loss_fn(out, video[:,(kernel_length//2):(-kernel_length//2+1),:,:])
+        # loss.backward()
+
+        loss = torch.nn.functional.mse_loss(out, video[:,(kernel_length//2):(-kernel_length//2+1),:,:])
+        loss += fr
+        # loss += model.temporal_kernels.abs().sum()
         loss.backward()
+
 
         # Adjust learning weights
         optimizer.step()
@@ -109,4 +114,4 @@ def train():
             ))
 
 if __name__ == "__main__":
-    train()
+    main()

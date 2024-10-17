@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+from typing import Tuple
 
 from utils import repeat_first_frame
 
@@ -40,7 +41,7 @@ class Encoder(torch.nn.Module):
 
     
     # Spatio-temporal (separable) convolution
-    def st_conv(self, x: torch.Tensor) -> torch.Tensor:
+    def st_conv(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Repeat first frame for valid convolution
         # x = repeat_first_frame(x, self.kernel_length-1)
 
@@ -67,9 +68,10 @@ class Encoder(torch.nn.Module):
         # Add poisson noise
         noise = torch.poisson(x)
         x = x + noise
+        mean_fr = x.abs().mean()
 
         # Apply weights to each kernel at every time point to up-sample each frame to match
         # the original frame dimensions
         x = x.transpose(-1, 1) @ self.neuron_weights
         
-        return x.view(x.shape[0], -1, self.kernel_size, self.kernel_size)
+        return (x.view(x.shape[0], -1, self.kernel_size, self.kernel_size), mean_fr)
