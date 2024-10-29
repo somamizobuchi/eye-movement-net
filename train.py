@@ -26,7 +26,7 @@ def main():
         fs
     )
 
-    load_checkpoint = True
+    load_checkpoint = False
     run =  "20241028_2337"
     iteration = 100000
 

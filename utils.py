@@ -216,3 +216,8 @@ def mutual_information_loss(input: torch.Tensor, target: torch.Tensor, bins: int
     px_py = px[:,None] * py[None,:]
     non_zero = pxy > 0
     return -torch.sum(pxy[non_zero] * torch.log(pxy[non_zero] / px_py[non_zero]))
+
+    
+def decorrelation_loss(input: torch.Tensor) -> torch.Tensor:
+    R = torch.corrcoef(input)
+    return torch.nn.functional.mse_loss(R, torch.eye(R.shape[0]))
