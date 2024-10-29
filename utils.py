@@ -205,3 +205,14 @@ def gen_em_sequence(pre_saccade_drift_samples: int, fs: float, diffusion_const: 
     trace = np.concat((trace, drift_post.T + trace[-1, :]))
 
     return (trace, amplitude, direction)
+
+
+def mutual_information_loss(input: torch.Tensor, target: torch.Tensor, bins: int) -> torch.Tensor:
+    joint = torch.stack((input.ravel(), target.ravel())).T
+    hist2, _ = torch.histogramdd(joint, [bins, bins])
+    pxy = hist2 / hist2.sum()
+    px = pxy.sum(dim=1)
+    py = pxy.sum(dim=0)
+    px_py = px[:,None] * py[None,:]
+    non_zero = pxy > 0
+    return -torch.sum(pxy[non_zero] * torch.log(pxy[non_zero] / px_py[non_zero]))
