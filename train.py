@@ -54,7 +54,7 @@ def main():
 
     data_loader = DataLoader(dataset,shuffle=True)
 
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.002)
     running_loss = 0.
     last_loss = 0.
     running_mse = 0.
@@ -65,7 +65,7 @@ def main():
     iterations = 1000000
     log_iterations = 1000 
     checkpoint_iterations = 25000
-    alpha = 0.01
+    alpha = 0.001
     transmission_delay_samples = 16
 
     n_accumulate_steps = 8
