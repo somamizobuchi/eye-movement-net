@@ -42,7 +42,6 @@ class Encoder(torch.nn.Module):
     
     # Spatio-temporal (separable) convolution
     def st_conv(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = torch.nan_to_num(x, 0.0)
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
         x = x.view(*x.shape[0:2], -1) @ self.spatial_kernels.unsqueeze(0)
@@ -50,13 +49,14 @@ class Encoder(torch.nn.Module):
         # Temporal convolution (kernel-wise)
         # out = (K, T)
         x = F.conv1d(x.transpose(1, -1), self.temporal_kernels.unsqueeze(1), groups=self.n_kernels)
+        x = torch.nan_to_num(x, 1e-6)
 
         x = F.softplus(x)
 
         noise = torch.poisson(x)
         x = x + noise
 
-        fr = torch.mean(x ** 2.)
+        fr = x.clone()
 
         # Apply weights to each kernel at every time point to up-sample each frame to match
         # the original frame dimensions

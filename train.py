@@ -6,6 +6,7 @@ from data import EMSequenceDataset
 from model import Encoder
 import matplotlib.pyplot as plt
 import numpy as np
+from utils import decorrelation_loss
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 def main():
     kernel_size = 32
     kernel_length = 32
-    n_kernels = 72
+    n_kernels = 144
     fs = 480
     ppd = 180
 
@@ -27,7 +28,7 @@ def main():
     )
 
     load_checkpoint = False
-    run =  "20241028_2337"
+    run =  "20241029_0944"
     iteration = 100000
 
     if load_checkpoint:
@@ -58,12 +59,13 @@ def main():
     last_loss = 0.
     running_mse = 0.
     running_fr = 0.
+    running_decorr = 0.
 
     epoch_index = 1
     iterations = 1000000
     log_iterations = 1000 
-    checkpoint_iterations = 100000
-    alpha = 0.0001
+    checkpoint_iterations = 25000
+    alpha = 0.01
     transmission_delay_samples = 16
 
     n_accumulate_steps = 8
@@ -81,8 +83,15 @@ def main():
 
         # Compute the loss and its gradients
         loss_mse = torch.nn.functional.mse_loss(out[:,:-transmission_delay_samples,:], video[:,kernel_length-1+transmission_delay_samples:,:,:])
-        loss_fr = fr
+        # loss_fr = torch.square(10. - fr.pow(2.).mean())
+        loss_fr = fr.pow(2.).mean()
+        # loss_decorr = decorrelation_loss(fr.squeeze())
         loss = (loss_mse + alpha * loss_fr) / n_accumulate_steps
+        # loss = loss_mse / n_accumulate_steps
+        if torch.isnan(loss):
+            print(f"NaN detected in loss at iteration {i}, skipping.")
+            continue
+
         loss.backward()
 
         # gradient accumulation
@@ -97,6 +106,7 @@ def main():
             running_loss += loss.item() * n_accumulate_steps
             running_mse += loss_mse.item()
             running_fr += loss_fr.item()
+            # running_decorr += loss_decorr.item()
 
         if i % log_iterations == log_iterations-1:
             # Send spatiotemporal kernels
@@ -120,16 +130,17 @@ def main():
                 writer.add_video("Reconstruction", vid_tensor=tb_video[:,:,None,:,:].repeat(1, 1, 3, 1, 1), global_step=i, fps=10)
             
                 # Log loss metrics
-                last_loss = running_loss / log_iterations # loss per batch
-                writer.add_scalar('Loss/train', last_loss, i)
-                writer.add_scalar('Loss/mse', loss_mse / n_accumulate_steps, i)
-                writer.add_scalar('Loss/firing', alpha * loss_fr / n_accumulate_steps, i)
-                tq_range.set_postfix_str("Loss={:.5f}".format(last_loss))
+                writer.add_scalar('Loss/train', running_loss / log_iterations, i)
+                writer.add_scalar('Loss/mse', running_mse / log_iterations, i)
+                writer.add_scalar('Loss/firing', alpha * running_fr / log_iterations, i)
+                # writer.add_scalar('Loss/decorrelation', running_decorr/ n_accumulate_steps, i)
+                tq_range.set_postfix_str("Loss={:.5f}".format(running_loss / log_iterations))
 
                 # reset running loss
                 running_loss = 0.
                 running_mse = 0.
                 running_fr = 0.
+                running_decorr = 0.
         
         if i % checkpoint_iterations == checkpoint_iterations - 1:
             torch.save({
