@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from typing import Tuple
+from data import EMStats
 
 from utils import repeat_first_frame
 
@@ -23,9 +24,7 @@ class Encoder(torch.nn.Module):
 
         self.spatial_kernels = torch.nn.Parameter(torch.zeros([self.kernel_size**2, self.n_kernels]).float())
         self.temporal_kernels = torch.nn.Parameter(torch.zeros([n_kernels, self.kernel_length]).float())
-        # self.neuron_weights = torch.nn.Parameter(torch.zeros([self.n_kernels, self.kernel_size**2]))
         self.decoder = torch.nn.Linear(n_kernels, self.kernel_size**2)
-        # self.biases = torch.nn.Parameter(torch.zeros(self.n_kernels, self.kernel_size**2))
         self.relu = torch.nn.Softplus()
 
 
@@ -35,7 +34,6 @@ class Encoder(torch.nn.Module):
     def initialize(self):
         torch.nn.init.kaiming_normal_(self.spatial_kernels)
         torch.nn.init.kaiming_normal_(self.temporal_kernels)
-        # torch.nn.init.kaiming_normal_(self.neuron_weights)
         torch.nn.init.xavier_uniform_(self.decoder.weight)
         torch.nn.init.zeros_(self.decoder.bias)
 
@@ -63,4 +61,5 @@ class Encoder(torch.nn.Module):
         x = self.decoder(x.transpose(-1, 1))
 
         x = x.view(x.shape[0], -1, self.kernel_size, self.kernel_size)
+
         return (x, fr)

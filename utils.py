@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.stats import norm, vonmises
 import torch
-from typing import Any
+from typing import Any, Tuple, Union
 
 # matplotlib.use("agg")
 
@@ -16,13 +16,76 @@ def repeat_first_frame(x: torch.Tensor, n: int) -> torch.Tensor:
     y = torch.cat((x[0,:].unsqueeze(0).repeat(n, 1, 1), x), dim=0)
     return y
 
+def frames_to_image(img_sz: Tuple[int, int, int], retinal_input: torch.Tensor, eye_px):
+    assert(retinal_input.shape[1] == eye_px.shape[1]), "Temporal dimesnsion mismatch!"
+    output = torch.zeros(img_sz)
+    for batch in range(img_sz[0]):
+        for t in range(eye_px.shape[1]):
+            frame = retinal_input[batch,t,:]
+            x_px = eye_px[batch,t,0]
+            y_px = eye_px[batch,t,1]
+            output[batch, y_px:(y_px + frame.shape[0]), x_px:(x_px + frame.shape[1])] += frame
+    return output
 
+def accumulate_frames_at_positions(
+   canvas_size: Tuple[int, int],
+   frames: torch.Tensor, 
+   positions: torch.Tensor
+) -> torch.Tensor:
+   """
+   Accumulates multiple frames into a single output image by placing
+   each frame at specified positions and summing overlapping regions.
 
-def cycle(iterable):
-    while True:
-        for item in iterable:
-            yield item
+   Args:
+       canvas_size: Tuple of (height, width) for the output image
+       frames: Tensor of frames to place, shape (num_frames, frame_height, frame_width)
+       positions: Tensor of (x,y) positions, shape (num_frames, 2)
 
+   Returns:
+       Tensor of shape canvas_size containing the accumulated frames
+   """
+   assert(frames.shape[0] == positions.shape[0]), "Temporal dimension mismatch!"
+   
+   # Initialize empty output canvas
+   canvas = torch.zeros(canvas_size)
+   
+   # For each frame
+   for t in range(positions.shape[0]):
+       frame = frames[t,:]         # Get current frame
+       x_pos = positions[t,0]      # Get x position 
+       y_pos = positions[t,1]      # Get y position
+       
+       # Add frame to canvas at specified position
+       canvas[y_pos:(y_pos + frame.shape[0]), 
+             x_pos:(x_pos + frame.shape[1])] += frame
+   
+   return canvas
+
+def apply_roi_mask(img: torch.Tensor, roi_positions: torch.Tensor, roi_size: Tuple[int, int], fill: float = 0.):
+    """
+    Masks an image to keep only specified regions of interest (ROIs), filling the rest.
+    Uses direct array indexing which can be faster for smaller numbers of ROIs.
+
+    Args:
+        img: Input image tensor of shape (H, W)
+        roi_positions: Tensor of shape (N, 2) containing (x, y) coordinates of ROI top-left corners
+        roi_size: Tuple of (width, height) for all ROIs
+        fill: Value to fill non-ROI areas with (default: 0.0)
+
+    Returns:
+        Tensor of same shape as input with areas outside ROIs filled
+    """
+    # Initialize boolean mask same size as image (all False)
+    mask = torch.full(img.shape, False)
+    
+    # Set True for each ROI region using slice indexing
+    for t in range(roi_positions.shape[0]):
+        mask[roi_positions[t,1]:roi_positions[t,1]+roi_size[1],
+             roi_positions[t,0]:roi_positions[t,0]+roi_size[0]] = True
+    
+    # Fill all non-ROI areas with fill value
+    img[~mask] = fill
+    return img
 
 def kernel_images(W, kernel_size, image_channels, rows=None, cols=None, spacing=1):
     """
@@ -118,8 +181,8 @@ def brownian_eye_trace(D: np.double, fs: int, n: int, rng: np.random.Generator =
     return np.cumsum(K * trace, axis=1)
 
     
-def crop_image(img, roi_size, center):
-    return img[center[1]-roi_size//2:center[1]+roi_size//2, center[0]-roi_size//2:center[0]+roi_size//2]
+def crop_image(img, roi_size: int, top_left: Tuple[int, int]):
+    return img[top_left[1]:(top_left[1]+roi_size), top_left[0]:(top_left[0]+roi_size)]
 
 def implay(seq, interval = 20, repeat = False, repeat_delay = -1, save_name: str = None):
     """
@@ -204,7 +267,10 @@ def gen_em_sequence(pre_saccade_drift_samples: int, fs: float, diffusion_const: 
     trace = np.concat((drift_pre.T, saccade.T + drift_pre[:,-1]))
     trace = np.concat((trace, drift_post.T + trace[-1, :]))
 
-    return (trace, amplitude, direction)
+    saccade_start_idx = drift_pre.shape[1] - 1
+    drift_start_idx = saccade_start_idx + saccade.shape[1] - 1
+
+    return (trace, amplitude, direction, saccade_start_idx, drift_start_idx)
 
 
 def mutual_information_loss(input: torch.Tensor, target: torch.Tensor, bins: int) -> torch.Tensor:
