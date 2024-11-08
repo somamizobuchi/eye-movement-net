@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Any
 from data import EMStats
 
 from utils import repeat_first_frame
@@ -50,6 +50,7 @@ class Encoder(nn.Module):
         # out = (K, T)
         x = F.conv1d(x.transpose(
             1, -1), self.temporal_kernels_full().unsqueeze(1), groups=self.n_kernels)
+
         x = torch.nan_to_num(x, 1e-6)
 
         x = F.softplus(x)
