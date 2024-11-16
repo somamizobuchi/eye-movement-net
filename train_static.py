@@ -29,7 +29,7 @@ def main():
     delay_samples = 1
 
     # Batch size or gradient accumulation steps
-    batch_size = 8
+    batch_size = 16
     epoch_index = 1
 
     # Logging
@@ -43,7 +43,7 @@ def main():
 
     model = Encoder(kernel_size, kernel_length, n_kernels, fs, delay_samples)
 
-    load_checkpoint = True
+    load_checkpoint = False
     run = "20241113_1648"
     iteration = 187_500
 
@@ -60,7 +60,7 @@ def main():
     writer = SummaryWriter(log_dir="logs/run_{}".format(run))
 
     # device = "mps" if torch.backends.mps.is_available() else "cpu"
-    device = "cpu"
+    device = "cuda"
     model.to(device)
 
     dataset = FixationDataset(kernel_size, fs, ppd, drift_samples, diffusion_constant)
@@ -121,7 +121,7 @@ def main():
         )
 
         # Compute the loss and its gradients
-        loss_mse = torch.nn.functional.mse_loss(recons, target) / batch_size
+        loss_mse = torch.nn.functional.mse_loss(recons, target.to(device=device)) / batch_size
         loss_jerk = alpha * model.jerk_energy_loss()
         loss_fr = beta * (
             model.spatial_kernels.square().mean()

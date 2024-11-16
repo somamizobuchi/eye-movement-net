@@ -49,6 +49,7 @@ class Encoder(nn.Module):
     def st_conv(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
+        x = x.to(self.spatial_kernels.device)
         x = x.view(*x.shape[0:2], -1) @ self.spatial_kernels.unsqueeze(0)
 
         # Temporal convolution (kernel-wise)
