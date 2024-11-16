@@ -19,22 +19,33 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 def main():
-    kernel_size = 32
-    kernel_length = 32
-    n_kernels = 32
-    fs = 480.0
+    kernel_size = 16
+    kernel_length = 48
+    n_kernels = 96
+    fs = 640
     ppd = 180
-    diffusion_constant = 30.0 / 3600.0  # deg^2/sec
+    diffusion_constant = 15.0 / 3600.0  # deg^2/sec
     drift_samples = 256
     delay_samples = 1
+
     # Batch size or gradient accumulation steps
     batch_size = 8
+    epoch_index = 1
+
+    # Logging
+    iterations = 1_000_000 // batch_size
+    log_iterations = 1000 // batch_size
+    checkpoint_iterations = 50_000 // batch_size
+
+    # Hyper parameters
+    alpha = 5  # Jerk energy (smoothness)
+    beta = 0.01  # L2 loss
 
     model = Encoder(kernel_size, kernel_length, n_kernels, fs, delay_samples)
 
-    load_checkpoint = False
-    run = "20241029_0944"
-    iteration = 100000
+    load_checkpoint = True
+    run = "20241113_1648"
+    iteration = 187_500
 
     if load_checkpoint:
         state = torch.load(
@@ -62,18 +73,7 @@ def main():
     running_mse = 0.0
     running_jerk = 0.0
     running_fr = 0.0
-    running_decorr = 0.0
 
-    epoch_index = 1
-    iterations = 1000000
-    log_iterations = 1000
-    checkpoint_iterations = 50000
-    alpha = 10
-    beta = 0.1
-
-    # Here, we use enumerate(training_loader) instead of
-    # iter(training_loader) so that we can track the batch
-    # index and do some intra-epoch reporting
     tq_range = trange(
         iteration, iteration + iterations, desc="Training progress", ncols=100
     )
@@ -82,6 +82,7 @@ def main():
     for i in tq_range:
 
         retinal_input, image, eye_px = next(iter(data_loader))
+        # normalize input
         retinal_input = normalize_unit_variance(retinal_input)
         image = normalize_unit_variance(image)
 
@@ -89,9 +90,9 @@ def main():
         optimizer.zero_grad()
 
         # Encode
-        out, fr = model(retinal_input)
+        out, _ = model(retinal_input)
 
-        # Spatial reconstruction
+        # Spatiotopic reconstruction
         target = torch.stack(
             [
                 apply_roi_mask(
@@ -120,14 +121,14 @@ def main():
         )
 
         # Compute the loss and its gradients
-        loss_mse = torch.nn.functional.mse_loss(recons, target)
+        loss_mse = torch.nn.functional.mse_loss(recons, target) / batch_size
         loss_jerk = alpha * model.jerk_energy_loss()
         loss_fr = beta * (
             model.spatial_kernels.square().mean()
             + model.temporal_kernels.square().mean()
         )
         loss = loss_mse + loss_jerk + loss_fr
-        # loss /= n_accumulate_steps
+
         if torch.isnan(loss):
             print(f"NaN detected in loss at iteration {i}, skipping.")
             continue
@@ -135,19 +136,12 @@ def main():
         loss.backward()
         optimizer.step()
 
-        # gradient accumulation
-        # if (i + 1) % n_accumulate_steps == 0:
-        #     # Adjust learning weights
-        #     optimizer.step()
-        #     optimizer.zero_grad()
-
         # Gather data and report
         with torch.no_grad():
             running_loss += loss.item()
             running_mse += loss_mse.item()
             running_jerk += loss_jerk.item()
             running_fr += loss_fr.item()
-            # running_decorr += loss_decorr.item()
 
         if i % log_iterations == log_iterations - 1:
             # Send spatiotemporal kernels
@@ -167,10 +161,13 @@ def main():
                 # Visualize spatial reconstruction
                 writer.add_images(
                     "Reconstruction/Spatial",
-                    rescale(torch.concat((target, recons), 0))[:, None, :, :],
+                    rescale(torch.concat((target, recons), dim=1))[:, None, :, :],
                     i,
                     dataformats="NCHW",
                 )
+
+                # Add histogram of ReLU slopes
+                writer.add_histogram("Kernel/ReLU_Slope", model.non_linear.slopes, i)
 
                 # visualize reconstruction
                 # input = retinal_input[:, kernel_length-1:, :, :]
@@ -187,7 +184,8 @@ def main():
                 writer.add_scalar("Loss/mse", running_mse / log_iterations, i)
                 writer.add_scalar("Loss/jerk", running_jerk / log_iterations, i)
                 writer.add_scalar("Loss/firing", running_fr / log_iterations, i)
-                # writer.add_scalar('Loss/decorrelation', running_decorr/ n_accumulate_steps, i)
+
+                # Update progress with loss
                 tq_range.set_postfix_str(
                     "Loss={:.5f}".format(running_loss / log_iterations)
                 )
@@ -197,7 +195,6 @@ def main():
                 running_mse = 0.0
                 running_jerk = 0.0
                 running_fr = 0.0
-                running_decorr = 0.0
 
         if i % checkpoint_iterations == checkpoint_iterations - 1:
             torch.save(

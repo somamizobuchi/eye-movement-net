@@ -53,7 +53,7 @@ def accumulate_frames_at_positions(
     assert frames.shape[0] == positions.shape[0], "Temporal dimension mismatch!"
 
     # Initialize empty output canvas
-    canvas = torch.zeros(canvas_size)
+    canvas = torch.zeros(canvas_size, device=frames.device)
 
     # For each frame
     for t in range(positions.shape[0]):
@@ -349,8 +349,12 @@ def decorrelation_loss(input: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.mse_loss(R, torch.eye(R.shape[0]))
 
 
-def normalize_unit_variance(input: torch.Tensor) -> torch.Tensor:
-    return (input - input.mean()) / input.std()
+def normalize_unit_variance(
+    input: torch.Tensor, dim: int | None = None
+) -> torch.Tensor:
+    return (input - input.mean(dim=dim, keepdim=True)) / (
+        input.std(dim=dim, keepdim=True) + 1e-8
+    )
 
 
 def rescale(input: torch.Tensor) -> torch.Tensor:

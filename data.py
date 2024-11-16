@@ -120,7 +120,7 @@ class FixationDataset(Dataset):
                     np.random.randint(h - self.roi_size),
                 ]
             )
-            # eye_deg, amp, theta, sacc_idx, drift_idx = utils.gen_em_sequence(self.n_drift_pad, self.fs, 20)
+
             eye_deg = utils.brownian_eye_trace(self.D, self.fs, self.fixation_legnth).T
             roi = np.astype(eye_deg * self.ppd, np.int64) + start_idx[None, :]
 
@@ -141,9 +141,9 @@ class FixationDataset(Dataset):
             cropped,
             (
                 0,
-                self.roi_size * 4 - cropped.shape[1],
+                self.roi_size * 8 - cropped.shape[1],
                 0,
-                self.roi_size * 4 - cropped.shape[0],
+                self.roi_size * 8 - cropped.shape[0],
             ),
             mode="constant",
             value=0.0,
