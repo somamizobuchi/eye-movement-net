@@ -10,8 +10,6 @@ from scipy.stats import norm, vonmises
 import torch
 from typing import Any, Tuple, Union
 
-# matplotlib.use("agg")
-
 
 def repeat_first_frame(x: torch.Tensor, n: int) -> torch.Tensor:
     y = torch.cat((x[0, :].unsqueeze(0).repeat(n, 1, 1), x), dim=0)
@@ -85,6 +83,7 @@ def apply_roi_mask(
     roi_size: Tuple[int, int],
     fill: float = 0.0,
     crop_center: bool = False,
+    whiten_output: bool = False,
 ):
     """
     Masks an image to keep only specified regions of interest (ROIs), filling the rest.
@@ -99,6 +98,16 @@ def apply_roi_mask(
     Returns:
         Tensor of same shape as input with areas outside ROIs filled
     """
+    # Crop center
+    if crop_center:
+        mean_pos = roi_positions.float().mean(0)
+        _, min_idx = torch.square(mean_pos - roi_positions.float()).sum(1).min(dim=0)
+        center_pos = roi_positions[min_idx, :]
+        return img[
+            center_pos[1] : center_pos[1] + roi_size[1],
+            center_pos[0] : center_pos[0] + roi_size[0],
+        ]
+
     # Initialize boolean mask same size as image (all False)
     mask = torch.full(img.shape, False)
 
@@ -111,16 +120,6 @@ def apply_roi_mask(
 
     # Fill all non-ROI areas with fill value
     img[~mask] = fill
-
-    # Crop center
-    if crop_center:
-        mean_pos = roi_positions.float().mean(0)
-        _, min_idx = torch.square(mean_pos - roi_positions.float()).sum(1).min(dim=0)
-        center_pos = roi_positions[min_idx, :]
-        return img[
-            center_pos[1] : center_pos[1] + roi_size[1],
-            center_pos[0] : center_pos[0] + roi_size[0],
-        ]
 
     return img
 
@@ -331,19 +330,6 @@ def gen_em_sequence(pre_saccade_drift_samples: int, fs: float, diffusion_const: 
     return (trace, amplitude, direction, saccade_start_idx, drift_start_idx)
 
 
-def mutual_information_loss(
-    input: torch.Tensor, target: torch.Tensor, bins: int
-) -> torch.Tensor:
-    joint = torch.stack((input.ravel(), target.ravel())).T
-    hist2, _ = torch.histogramdd(joint, [bins, bins])
-    pxy = hist2 / hist2.sum()
-    px = pxy.sum(dim=1)
-    py = pxy.sum(dim=0)
-    px_py = px[:, None] * py[None, :]
-    non_zero = pxy > 0
-    return -torch.sum(pxy[non_zero] * torch.log(pxy[non_zero] / px_py[non_zero]))
-
-
 def decorrelation_loss(input: torch.Tensor) -> torch.Tensor:
     R = torch.corrcoef(input)
     return torch.nn.functional.mse_loss(R, torch.eye(R.shape[0]))
@@ -359,3 +345,60 @@ def normalize_unit_variance(
 
 def rescale(input: torch.Tensor) -> torch.Tensor:
     return (input - input.min()) / (input.max() - input.min())
+
+
+def zca_whitening(input: torch.Tensor) -> torch.Tensor:
+    """
+    Performs ZCA whitening on the input tensor
+
+    Args:
+        input (torch.Tensor): Input tensor of shape (batch_size, n_features)
+
+    Returns:
+        torch.Tensor: Whitened tensor of the same shape
+    """
+    mean = input.mean(dim=1, keepdim=True)
+    std = input.std(dim=1, keepdim=True)
+    input = (input - mean) / (std + 1e-8)
+
+    sigma = torch.cov(input)
+
+    u, s, _ = torch.linalg.svd(sigma)
+
+    epsilon = 1e-6
+    zca_matrix = torch.tensordot(
+        u,
+        torch.tensordot(torch.diag(1.0 / torch.sqrt(s + epsilon)), u.T, dims=1),
+        dims=1,
+    )
+
+    return torch.tensordot(zca_matrix, input, dims=1)
+
+
+def get_keyframe_indices(roi_positions: torch.Tensor) -> torch.Tensor:
+    mean_pos = roi_positions.float().mean(dim=1, keepdim=True)
+    distance = torch.square(mean_pos - roi_positions).sum(dim=2)
+    return distance.min(1).indices
+
+
+def accumulate_frames(frames: torch.Tensor, offset_indices: torch.Tensor):
+    reconstructed = torch.zeros_like(frames[0])
+    for t, offset in enumerate(offset_indices.T):
+        reconstructed[
+            (0 if offset[1] <= 0 else -offset[1]) : (
+                offset[1] if offset[1] < 0 else None
+            ),
+            (0 if offset[0] <= 0 else -offset[0]) : (
+                offset[0] if offset[0] < 0 else None
+            ),
+        ] += frames[
+            t,
+            (-offset[1] if offset[1] <= 0 else 0) : (
+                None if offset[1] <= 0 else offset[1]
+            ),
+            (-offset[0] if offset[0] <= 0 else 0) : (
+                None if offset[0] <= 0 else offset[0]
+            ),
+        ]
+
+    return reconstructed / frames.shape[0]

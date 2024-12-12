@@ -1,11 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from typing import Tuple, Any
-from data import EMStats
-
-from utils import repeat_first_frame
 
 
 class Encoder(nn.Module):
@@ -37,9 +33,9 @@ class Encoder(nn.Module):
         self.non_linear = ChannelLearnableReLU(n_kernels)
 
         # initialize parameters
-        torch.nn.init.kaiming_normal_(self.spatial_kernels)
-        torch.nn.init.kaiming_normal_(self.temporal_kernels)
-        torch.nn.init.xavier_uniform_(self.decoder.weight)
+        torch.nn.init.xavier_normal_(self.spatial_kernels)
+        torch.nn.init.xavier_normal_(self.temporal_kernels)
+        torch.nn.init.xavier_normal_(self.decoder.weight)
         torch.nn.init.zeros_(self.decoder.bias)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -49,6 +45,7 @@ class Encoder(nn.Module):
     def st_conv(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
+        x += torch.randn_like(x)
         x = x.view(*x.shape[0:2], -1) @ self.spatial_kernels.unsqueeze(0)
 
         # Temporal convolution (kernel-wise)
@@ -64,12 +61,13 @@ class Encoder(nn.Module):
         # x = F.softplus(x)
         x = self.non_linear(x)
 
-        noise = torch.poisson(x)
-        x = x + noise
+        # noise = torch.poisson(x)
+        # x += torch.randn_like(x)
 
         encoder_output = x.clone()
 
-        # Apply weights to each kernel at every time point to up-sample each frame to match
+        # Apply weights to each kernel at every time point to up-sample each
+        # frame to match
         # the original frame dimensions
         x = self.decoder(x.transpose(-1, 1))
 
@@ -78,7 +76,7 @@ class Encoder(nn.Module):
         return (x, encoder_output)
 
     def jerk_energy_loss(self):
-        return self.temporal_kernels_full().diff(dim=1).square().mean()
+        return (self.temporal_kernels_full().diff(dim=1) * self.fs).square().mean()
 
     def temporal_kernels_full(self) -> torch.Tensor:
         return torch.concat(
@@ -92,6 +90,11 @@ class Encoder(nn.Module):
             ),
             dim=1,
         )
+
+    def kernel_energy(self):
+        return self.spatial_kernels.square().mean(
+            dim=0
+        ) + self.temporal_kernels.square().mean(dim=1)
 
 
 class ChannelLearnableReLU(nn.Module):

@@ -3,3 +3,7 @@ __pycache__
 data/
 checkpoints/
 run*/
+.vscode/
+.ropeproject/
+logs/
+

@@ -1,3 +1,4 @@
+import math
 import torch
 from torch.utils.data import Dataset
 import torch.nn.functional as F
@@ -33,7 +34,7 @@ class EMSequenceDataset(Dataset):
         self.ppd = pixels_per_degree
 
         # Load images
-        root = "upenn"
+        root = "natural_noise"
         self.files = sorted(glob(f"data/{root}/*.npy"))
         print("Loading {} images from {} ...".format(len(self.files), root))
         self.images = []
@@ -96,7 +97,7 @@ class FixationDataset(Dataset):
         self.D = diffusion_constant
 
         # Load images
-        root = "upenn"
+        root = "upenn/cd02A"
         self.files = sorted(glob(f"data/{root}/*.npy"))
         print("Loading {} images from {} ...".format(len(self.files), root))
         self.images = []
@@ -155,3 +156,107 @@ class FixationDataset(Dataset):
             seq[t, :, :] = utils.crop_image(cropped, self.roi_size, roi[t, :])
 
         return torch.from_numpy(seq), cropped, torch.from_numpy(roi)
+
+
+class WhitenedDataset(Dataset):
+    def __init__(
+        self,
+        filename: str = "data/cd02A_patches.npy",
+        sampling_frequency: float = 360.0,
+        pixels_per_degree: float = 180.0,
+        roi_size: int = 32,
+        fixation_samples: int = 256,
+        diffusion_constant: float = 15.0 / 3600.0,
+        device: str = "cpu",
+    ):
+        self.filename = filename
+        self.fs = sampling_frequency
+        self.ppd = pixels_per_degree
+        self.roi_size = roi_size
+        self.samples = fixation_samples
+        self.d = diffusion_constant
+        self.device = device
+
+        # Extract length
+        self.data = np.load(filename, mmap_mode="r", allow_pickle=True)
+        self.length = self.data.shape[0]
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(
+        self, idx: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        patches = self.data[:, idx].copy()
+
+        original = torch.FloatTensor(patches[0])
+        whitened = torch.FloatTensor(patches[1])
+
+        h, w = original.shape
+
+        # Generate drift within bounds of image
+        while True:
+            x_start = torch.randint(
+                0,
+                w - self.roi_size,
+                [
+                    1,
+                ],
+            )
+            y_start = torch.randint(
+                0,
+                h - self.roi_size,
+                [
+                    1,
+                ],
+            )
+            gaze_pos = (
+                torch.round(self.brownian_eye_trace() * self.ppd)
+                + torch.tensor([x_start, y_start])[:, None]
+            )
+            gaze_pos = gaze_pos.int()
+
+            # Within bounds
+            if (
+                torch.all(
+                    torch.max(gaze_pos + self.roi_size, dim=1).values
+                    <= torch.Tensor([w, h])
+                )
+                and torch.min(gaze_pos) >= 0
+            ):
+                break
+
+        # Extract ROIs and combine as sequence
+        input = torch.stack([self.crop(original, idx) for idx in gaze_pos.T]).to(
+            self.device
+        )
+        target = torch.stack([self.crop(whitened, idx) for idx in gaze_pos.T]).to(
+            self.device
+        )
+
+        # Find keyframe
+        target_idx = self.find_keyframe_index(gaze_pos).to(self.device)
+        # target = self.crop(original, gaze_pos[:, target_idx])
+
+        return input, target, target_idx, gaze_pos.to(self.device)
+
+    def brownian_eye_trace(self) -> torch.Tensor:
+        """ """
+        K = math.sqrt(2.0 * self.d / self.fs)
+        eye_trace = K * torch.randn((2, self.samples))
+        eye_trace = torch.concat([torch.tensor([0.0, 0.0])[:, None], eye_trace], dim=1)
+        eye_trace = torch.cumsum(eye_trace, dim=1)
+        return eye_trace[:, :-1]
+
+    def crop(self, img: torch.Tensor, top_left: torch.Tensor | Tuple[int, int]):
+        return img[
+            top_left[1] : top_left[1] + self.roi_size,
+            top_left[0] : top_left[0] + self.roi_size,
+        ]
+
+    @staticmethod
+    def find_keyframe_index(gaze_coords: torch.Tensor) -> torch.Tensor():
+        mean_pos = gaze_coords.float().mean(dim=1, keepdim=True)
+        distance = torch.square(mean_pos - gaze_coords).sum(dim=0)
+        return torch.min(distance, dim=0).indices
