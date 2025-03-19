@@ -246,9 +246,11 @@ def implay(seq, interval=20, repeat=False, repeat_delay=-1, save_name: str = Non
     """
     fig, ax = plt.subplots()
     video = []
+    seq -= seq.min()
+    seq /= seq.max()
     for i in range(0, seq.shape[2]):
         roi = seq[:, :, i]
-        implt = ax.imshow(roi, animated=True, cmap="gray")
+        implt = ax.imshow(roi, animated=True, cmap="gray", vmin=0, vmax=1)
         if i == 0:
             ax.imshow(roi, cmap="gray")
         video.append([implt])

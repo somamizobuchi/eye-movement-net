@@ -6,4 +6,5 @@ run*/
 .vscode/
 .ropeproject/
 logs/
-
+.DS_Store
+grid_search/

@@ -8,6 +8,7 @@ from tqdm import tqdm
 from glob import glob
 from dataclasses import dataclass
 from typing import Tuple
+from scipy.signal import savgol_filter
 
 
 @dataclass
@@ -211,19 +212,29 @@ class WhitenedDataset(Dataset):
                     1,
                 ],
             )
+
+            # Generate eye trace
+            gaze_deg = self.brownian_eye_trace() * self.ppd
+            gaze_smoothed = torch.from_numpy(savgol_filter(gaze_deg, 31, 1, axis=1))
             gaze_pos = (
-                torch.round(self.brownian_eye_trace() * self.ppd)
-                + torch.tensor([x_start, y_start])[:, None]
-            )
-            gaze_pos = gaze_pos.int()
+                torch.round(gaze_deg) + torch.tensor([x_start, y_start])[:, None]
+            ).int()
+            gaze_pos_smoothed = (
+                torch.round(gaze_smoothed) + torch.tensor([x_start, y_start])[:, None]
+            ).int()
 
             # Within bounds
             if (
                 torch.all(
                     torch.max(gaze_pos + self.roi_size, dim=1).values
-                    <= torch.Tensor([w, h])
+                    < torch.Tensor([w, h])
                 )
                 and torch.min(gaze_pos) >= 0
+                and torch.all(
+                    torch.max(gaze_pos_smoothed + self.roi_size, dim=1).values
+                    < torch.Tensor([w, h])
+                )
+                and torch.min(gaze_pos_smoothed) >= 0
             ):
                 break
 
@@ -231,15 +242,21 @@ class WhitenedDataset(Dataset):
         input = torch.stack([self.crop(original, idx) for idx in gaze_pos.T]).to(
             self.device
         )
-        target = torch.stack([self.crop(whitened, idx) for idx in gaze_pos.T]).to(
-            self.device
-        )
+        target = torch.stack(
+            [self.crop(original, idx) for idx in gaze_pos_smoothed.T]
+        ).to(self.device)
 
         # Find keyframe
         target_idx = self.find_keyframe_index(gaze_pos).to(self.device)
         # target = self.crop(original, gaze_pos[:, target_idx])
 
-        return input, target, target_idx, gaze_pos.to(self.device)
+        return (
+            input,
+            target,
+            target_idx,
+            gaze_pos.to(self.device),
+            gaze_pos_smoothed.to(self.device),
+        )
 
     def brownian_eye_trace(self) -> torch.Tensor:
         """ """
@@ -256,7 +273,42 @@ class WhitenedDataset(Dataset):
         ]
 
     @staticmethod
-    def find_keyframe_index(gaze_coords: torch.Tensor) -> torch.Tensor():
+    def find_keyframe_index(gaze_coords: torch.Tensor) -> torch.Tensor:
         mean_pos = gaze_coords.float().mean(dim=1, keepdim=True)
         distance = torch.square(mean_pos - gaze_coords).sum(dim=0)
         return torch.min(distance, dim=0).indices
+
+
+class PinkNoise3Dataset(Dataset):
+    def __init__(
+        self,
+        filename: str = "data/pink_noise_videos.npy",
+        n_spatial: int = 32,
+        n_temporal: int = 96,
+    ):
+        self.n_spatial = n_spatial
+        self.n_temporal = n_temporal
+
+        # Extract length
+        self.data = np.load(filename, mmap_mode="r", allow_pickle=True)
+        self.length = self.data.shape[0]
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, index) -> Tuple[torch.Tensor]:
+        fi = torch.randint(self.data.shape[0], (1,))
+        coords = torch.randint(self.data.shape[2] - self.n_spatial, (2,))
+        ti = torch.randint(self.data.shape[1] - self.n_temporal, (1,))
+        out = (
+            self.data[
+                fi,
+                ti : ti + self.n_temporal,
+                coords[1] : coords[1] + self.n_spatial,
+                coords[0] : coords[0] + self.n_spatial,
+            ]
+            .copy()
+            .astype(np.float32)
+        )
+        out = (out - out.mean()) / out.std()
+        return torch.from_numpy(out)

@@ -11,90 +11,131 @@ class Encoder(nn.Module):
         temporal_kernel_length: int = 32,
         n_kernels: int = 32,
         f_samp_hz: float = 240,
-        temporal_delay: int = 4,
+        temporal_pad: Tuple[int, int] = (7, 2),
     ):
         super().__init__()
         self.kernel_size = spatial_kernel_size
         self.kernel_length = temporal_kernel_length
         self.n_kernels = n_kernels
         self.fs = f_samp_hz
-        self.temporal_delay = temporal_delay
+        self.temporal_pad = temporal_pad
         # Soft-plus activation second dim [beta, threshold]
         # self.softplus_params = torch.nn.Parameter(torch.zeros([n_kernels, 2]))
 
         self.spatial_kernels = torch.nn.Parameter(
-            torch.full([self.kernel_size**2, self.n_kernels], 0.0)
+            torch.full([self.n_kernels, self.kernel_size**2], 0.0)
         )
         self.temporal_kernels = torch.nn.Parameter(
-            torch.full([n_kernels, self.kernel_length - self.temporal_delay], 0.0)
+            torch.full([n_kernels, self.kernel_length - sum(self.temporal_pad)], 0.0)
         )
-        self.decoder = torch.nn.Linear(n_kernels, self.kernel_size**2)
-
-        self.non_linear = ChannelLearnableReLU(n_kernels)
+        # self.spatial_decoder = torch.nn.Linear(
+        #     n_kernels, self.kernel_size**2, bias=False
+        # )
+        self.spatial_decoder = torch.nn.Parameter(
+            torch.full([self.n_kernels, self.kernel_size**2], 0.0)
+        )
+        # self.temporal_decoder = torch.nn.Parameter(
+        #     torch.full([self.n_kernels, 45], 0.0)
+        # )
 
         # initialize parameters
         torch.nn.init.xavier_normal_(self.spatial_kernels)
         torch.nn.init.xavier_normal_(self.temporal_kernels)
-        torch.nn.init.xavier_normal_(self.decoder.weight)
-        torch.nn.init.zeros_(self.decoder.bias)
+        torch.nn.init.xavier_normal_(self.spatial_decoder)
+        # torch.nn.init.xavier_normal_(self.temporal_decoder)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.st_conv(x)
 
     # Spatio-temporal (separable) convolution
-    def st_conv(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def st_conv(self, input: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
-        x += torch.randn_like(x)
-        x = x.view(*x.shape[0:2], -1) @ self.spatial_kernels.unsqueeze(0)
+        x = input.reshape(*input.shape[0:2], -1) @ self.spatial_kernels.T.unsqueeze(0)
 
         # Temporal convolution (kernel-wise)
-        # out = (K, T)
         x = F.conv1d(
             x.transpose(1, -1),
-            self.temporal_kernels_full().unsqueeze(1),
+            self.pad_temporal().unsqueeze(1),
             groups=self.n_kernels,
         )
 
         x = torch.nan_to_num(x, 1e-6)
 
-        # x = F.softplus(x)
-        x = self.non_linear(x)
-
-        # noise = torch.poisson(x)
-        # x += torch.randn_like(x)
+        # Apply non-linearity
+        x = F.relu(x)
+        x = x + 0.1 * torch.randn_like(x)
+        # x = x + torch.poisson(x)
 
         encoder_output = x.clone()
 
-        # Apply weights to each kernel at every time point to up-sample each
-        # frame to match
-        # the original frame dimensions
-        x = self.decoder(x.transpose(-1, 1))
+        # Decoder
+        # x = x * self.temporal_decoder.unsqueeze(0)
+        x = x.transpose_(1, -1) @ self.spatial_decoder
 
+        # Reshape to original frame dimensions (B, T, X, Y)
         x = x.view(x.shape[0], -1, self.kernel_size, self.kernel_size)
 
         return (x, encoder_output)
 
-    def jerk_energy_loss(self):
-        return (self.temporal_kernels_full().diff(dim=1) * self.fs).square().mean()
+    def pad_temporal(self) -> torch.Tensor:
+        return torch.nn.functional.pad(
+            self.temporal_kernels, self.temporal_pad, "constant", 0
+        )
 
-    def temporal_kernels_full(self) -> torch.Tensor:
+    def temporal_kernels_full(self, input: torch.Tensor) -> torch.Tensor:
         return torch.concat(
             (
-                self.temporal_kernels,
+                input,
                 torch.zeros(
                     [self.n_kernels, self.temporal_delay],
                     dtype=torch.float,
-                    device=self.temporal_kernels.device,
+                    device=input.device,
                 ),
             ),
             dim=1,
         )
 
-    def kernel_energy(self):
-        return self.spatial_kernels.square().mean(
-            dim=0
-        ) + self.temporal_kernels.square().mean(dim=1)
+    def kernel_spatial_jerk(self):
+        padded = F.pad(
+            self.spatial_kernels.view(-1, self.kernel_size, self.kernel_size),
+            (1, 0, 1, 0),
+            mode="constant",
+            value=0,
+        )
+        padded_decoder = F.pad(
+            self.spatial_decoder.view(-1, self.kernel_size, self.kernel_size),
+            (1, 0, 1, 0),
+            mode="constant",
+            value=0,
+        )
+        out = torch.mean(
+            torch.sqrt(
+                padded.diff(dim=1).square()[:, :, 1:]
+                + padded.diff(dim=2).square()[:, 1:]
+            )
+        ) + torch.mean(
+            torch.sqrt(
+                padded_decoder.diff(dim=1).square()[:, :, 1:]
+                + padded_decoder.diff(dim=2).square()[:, 1:]
+            )
+        )
+
+        if torch.isnan(out):
+            return torch.zeros(1)
+
+        return out
+
+    def kernel_temporal_jerk(self):
+        padded = F.pad(self.temporal_kernels, (1, 0), mode="constant", value=0)
+        return (
+            padded.diff(
+                dim=1,
+            )
+            .abs()
+            .mean(dim=1)
+            .mean()
+        )
 
 
 class ChannelLearnableReLU(nn.Module):
