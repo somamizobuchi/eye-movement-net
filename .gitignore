@@ -8,3 +8,4 @@ run*/
 logs/
 .DS_Store
 grid_search/
+.venv
