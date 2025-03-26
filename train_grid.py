@@ -562,6 +562,15 @@ def main(
         **{k: v for k, v in kwargs.items() if k in TrainingConfig.__dataclass_fields__}
     )
 
+    if config.device == "cuda":
+        if not torch.cuda.is_available():
+            print("CUDA is not available. Using CPU instead.")
+            config.device = "cpu"
+    elif config.device == "mps":
+        if not torch.backends.mps.is_available():
+            print("MPS is not available. Using CPU instead.")
+            config.device = "cpu"
+
     trainer = Trainer(config)
     trainer.train()
 
