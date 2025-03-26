@@ -36,10 +36,9 @@ def generate_pink_noise_movie(
     H_pink[0, 0, 0] = 0.0  # Set DC component to 0
 
     # Transform noise to frequency domain
+    # Apply filter
     filtered_fft = H_pink * np.exp(1j * 2 * np.pi * np.random.randn(nt, nx, nx))
 
-    # Apply filter
-    # filtered_fft = noise_fft * H_pink
 
     # Transform back to spatial domain
     pink_noise = np.fft.ifftn(filtered_fft)
@@ -66,7 +65,7 @@ if __name__ == "__main__":
     # Generate and save images
     for i in tqdm(range(num_movies), desc="Generating pink noise"):
         # Generate noise image
-        noise = generate_pink_noise_movie(NX, NT, fs=30, ppd=1, alpha=alpha)
+        noise = generate_pink_noise_movie(NX, NT, fs=10, ppd=1, alpha=alpha)
         out[i] = noise
 
     implay(out[0].transpose(1, 2, 0), interval=10, repeat=True)
