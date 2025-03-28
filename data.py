@@ -87,7 +87,7 @@ class FixationDataset(Dataset):
         f_samp_hz: int = 240,
         pixels_per_degree: float = 240.0,
         fixation_length: int = 128,
-        diffusion_constant: float = 20.0 / 3600.0,
+        diffusion_constant: float = 15.0 / 3600.0,
     ) -> None:
         super().__init__()
 
@@ -188,7 +188,6 @@ class WhitenedDataset(Dataset):
     def __getitem__(
         self, idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-
         patches = self.data[:, idx].copy()
 
         original = torch.FloatTensor(patches[0])
