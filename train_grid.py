@@ -3,21 +3,19 @@ import signal
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import itertools
-import os
 
 import fire
 import json
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
-from tqdm import trange, tqdm
+from tqdm import trange
 
-from data import FixationDataset, WhitenedDataset, PinkNoise3Dataset
+from datasets import VideoDataset
 from model import Encoder
 from utils import (
-    accumulate_frames,
     rescale,
 )
 
@@ -30,7 +28,6 @@ class TrainingConfig:
     n_kernels: int = 100
     fs: int = 1000  # Hz
     ppd: int = 180.0  # pixels per degree
-    diffusion_constant: float = 15.0 / 3600.0  # deg^2/sec
     drift_samples: int = 64
     temporal_pad: List[int] = field(default_factory=lambda: [0, 5])
 
@@ -157,7 +154,7 @@ class Trainer:
             self.optimizer.load_state_dict(state["optimizer_state_dict"])
             print(f"Loaded checkpoint from {checkpoint_path}")
 
-        self.dataset = PinkNoise3Dataset(
+        self.dataset = VideoDataset(
             "data/pink_noise_videos.npy",
             self.config.kernel_size,
             self.config.drift_samples,
@@ -386,7 +383,7 @@ class Trainer:
         for i, params in enumerate(param_combinations):
             param_dict = {name: value for name, value in zip(param_names, params)}
 
-            print(f"\nGrid search combination {i+1}/{len(param_combinations)}:")
+            print(f"\nGrid search combination {i + 1}/{len(param_combinations)}:")
             for name, value in param_dict.items():
                 print(f"  {name}: {value}")
 
@@ -403,7 +400,7 @@ class Trainer:
             progress_bar = trange(
                 0,
                 iterations,
-                desc=f"Training combination {i+1}/{len(param_combinations)}",
+                desc=f"Training combination {i + 1}/{len(param_combinations)}",
                 ncols=100,
             )
 
