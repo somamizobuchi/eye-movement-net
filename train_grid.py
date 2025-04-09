@@ -155,7 +155,7 @@ class Trainer:
             print(f"Loaded checkpoint from {checkpoint_path}")
 
         self.dataset = VideoDataset(
-            "data/pink_noise_videos.npy",
+            "data/bm_fixation_videos.npy",
             self.config.kernel_size,
             self.config.drift_samples,
         )
