@@ -23,9 +23,9 @@ from utils import (
 @dataclass
 class TrainingConfig:
     # Model parameters
-    kernel_size: int = 20
-    kernel_length: int = 20
-    n_kernels: int = 100
+    kernel_size: int = 24
+    kernel_length: int = 24
+    n_kernels: int = 108
     fs: int = 1000  # Hz
     ppd: int = 180.0  # pixels per degree
     drift_samples: int = 64
@@ -155,7 +155,7 @@ class Trainer:
             print(f"Loaded checkpoint from {checkpoint_path}")
 
         self.dataset = VideoDataset(
-            "data/bm_fixation_videos.npy",
+            "data/pink_noise_videos.npy",
             self.config.kernel_size,
             self.config.drift_samples,
         )
