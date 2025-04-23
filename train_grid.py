@@ -25,23 +25,23 @@ class TrainingConfig:
     # Model parameters
     kernel_size: int = 24
     kernel_length: int = 24
-    n_kernels: int = 96
+    n_kernels: int = 128
     fs: int = 1000  # Hz
     ppd: int = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: List[int] = field(default_factory=lambda: [0, 3])
+    temporal_pad: List[int] = field(default_factory=lambda: [0, 1])
 
     # Training parameters
     batch_size: int = 16
     total_iterations: int = 500_000
-    log_iterations: int = 2500
+    log_iterations: int = 1000
     checkpoint_iterations: int = 100_000
 
     # Loss weights
     alpha: float = 1e-2  # Temporal jerk energy (smoothness)
-    delta: float = 1e-4  # Spatial jerk energy (smoothness)
-    beta: float = 1e-5  # Firing rate (encoder output)
-    gamma: float = 1e-5  # Regularization
+    delta: float = 3e-4  # Kernel variance
+    beta: float = 1e-2  # Firing rate (encoder output)
+    gamma: float = 5e-5  # Regularization
 
     # Checkpoint loading
     load_checkpoint: bool = False
@@ -325,7 +325,7 @@ class Trainer:
         loss_fr = beta * out.abs().mean()
         loss_reg = gamma * (
             self.model.spatial_kernels.square().sum()
-            # + self.model.temporal_kernels.square().mean()
+            + self.model.temporal_kernels.square().sum()
             + self.model.spatial_decoder.square().sum()
         )
 

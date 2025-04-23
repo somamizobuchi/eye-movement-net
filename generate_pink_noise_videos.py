@@ -10,7 +10,7 @@ if __name__ == "__main__":
     num_movies = 100  # Number of images to generate
     NX = 128  # Size of each image
     NT = 128
-    alpha = 1  # Pink noise parameter
+    alpha = 1.5  # Pink noise parameter
 
     # Create directory if it doesn't exist
     save_dir = "data/natural_noise"
