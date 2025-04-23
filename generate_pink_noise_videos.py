@@ -7,10 +7,10 @@ from fixation_utils import generate_pink_noise_movie
 
 if __name__ == "__main__":
     # Parameters
-    num_movies = 50  # Number of images to generate
+    num_movies = 100  # Number of images to generate
     NX = 128  # Size of each image
     NT = 128
-    alpha = 2.0  # Pink noise parameter
+    alpha = 1  # Pink noise parameter
 
     # Create directory if it doesn't exist
     save_dir = "data/natural_noise"
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # Generate and save images
     for i in tqdm(range(num_movies), desc="Generating pink noise"):
         # Generate noise image
-        noise = generate_pink_noise_movie(NX, NT, fs=10, ppd=1, alpha=alpha)
+        noise = generate_pink_noise_movie(NX, NT, fs=30, ppd=1, alpha=alpha)
         out[i] = noise
 
     implay(out[0].transpose(1, 2, 0), interval=10, repeat=True)

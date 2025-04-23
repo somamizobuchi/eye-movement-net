@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Any
+from typing import Tuple
 
 
 class Encoder(nn.Module):
@@ -52,6 +52,7 @@ class Encoder(nn.Module):
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
         x = input.reshape(*input.shape[0:2], -1) @ self.spatial_kernels.T.unsqueeze(0)
+        x = x + 0.1 * torch.randn_like(x)
 
         # Temporal convolution (kernel-wise)
         x = F.conv1d(
@@ -132,10 +133,59 @@ class Encoder(nn.Module):
             padded.diff(
                 dim=1,
             )
-            .abs()
+            .square()
             .mean(dim=1)
             .mean()
         )
+
+    def kernel_variance(self):
+        """
+        Calculate the spatial variance of kernel weights to measure how spread out
+        they are. This is similar to the kernel_variance function in the first model
+        but adapted to the structure of this model.
+        """
+        # Reshape the kernels for calculation
+        kernels = self.spatial_kernels.view(
+            self.n_kernels, self.kernel_size, self.kernel_size
+        )
+
+        # Normalize kernels
+        kernels_norm = kernels / torch.norm(
+            kernels.reshape(self.n_kernels, -1), dim=1, keepdim=True
+        ).view(self.n_kernels, 1, 1)
+
+        # Square the weights to get the energy distribution
+        kernel_energy = kernels_norm.pow(2)
+
+        # Compute weight projections along each axis
+        Wx = kernel_energy.sum(dim=2)  # Sum along y-axis (projection onto x-axis)
+        Wy = kernel_energy.sum(dim=1)  # Sum along x-axis (projection onto y-axis)
+
+        # Create coordinate grids
+        coords_x = torch.arange(
+            self.kernel_size, dtype=torch.float32, device=kernels.device
+        )
+        coords_y = torch.arange(
+            self.kernel_size, dtype=torch.float32, device=kernels.device
+        )
+
+        # Calculate center of mass for each kernel along each axis
+        mean_x = torch.sum(coords_x.view(1, -1) * Wx, dim=1)  # Shape: [n_kernels]
+        mean_y = torch.sum(coords_y.view(1, -1) * Wy, dim=1)  # Shape: [n_kernels]
+
+        # Calculate variance around center of mass
+        var_x = torch.sum(
+            (coords_x.view(1, -1) - mean_x.view(-1, 1)).pow(2) * Wx, dim=1
+        )
+        var_y = torch.sum(
+            (coords_y.view(1, -1) - mean_y.view(-1, 1)).pow(2) * Wy, dim=1
+        )
+
+        # Total variance is the sum of variances along both axes, averaged across all kernels
+        total_variance = (var_x + var_y).mean()
+
+        # Return combined variance of encoder and decoder
+        return total_variance
 
 
 class ChannelLearnableReLU(nn.Module):

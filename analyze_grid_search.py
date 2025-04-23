@@ -48,7 +48,7 @@ def radial_profile(data, center=None):
     return radial_mean
 
 
-def plot_combined_kernels(model, save_path=None, title=None, max_kernels=10):
+def plot_combined_kernels(model, save_path=None, title=None, max_kernels=None):
     """
     Create a combined plot with spatial, temporal kernels and radial power spectrum side by side in rows.
 
@@ -67,7 +67,10 @@ def plot_combined_kernels(model, save_path=None, title=None, max_kernels=10):
     kernel_size = int(np.sqrt(spatial_kernels.shape[1]))
 
     # Number of kernels to plot (limit to max_kernels)
-    n_kernels = min(spatial_kernels.shape[0], max_kernels)
+    if max_kernels is not None:
+        n_kernels = min(spatial_kernels.shape[0], max_kernels)
+    else:
+        n_kernels = spatial_kernels.shape[0]
 
     # Create figure with tighter spacing
     fig, axes = plt.subplots(n_kernels, 3, figsize=(18, 1.5 * n_kernels))
@@ -88,12 +91,12 @@ def plot_combined_kernels(model, save_path=None, title=None, max_kernels=10):
 
         # Plot spatial kernel on the left
         im = axes[i, 0].imshow(spatial_kernel, cmap="viridis")
-        axes[i, 0].set_title(f"Spatial Kernel {i+1}")
+        axes[i, 0].set_title(f"Spatial Kernel {i + 1}")
         axes[i, 0].axis("off")
 
         # Plot temporal kernel in the middle
         axes[i, 1].plot(temporal_kernels[i])
-        axes[i, 1].set_title(f"Temporal Kernel {i+1}")
+        axes[i, 1].set_title(f"Temporal Kernel {i + 1}")
         axes[i, 1].grid(True, alpha=0.3)
         axes[i, 1].set_xlabel("Time Steps")
         axes[i, 1].set_ylabel("Kernel Value")
@@ -112,10 +115,11 @@ def plot_combined_kernels(model, save_path=None, title=None, max_kernels=10):
         radial_ps = dip.RadialMean(power_spectrum, binSize=1)
         axes[i, 2].plot(10.0 * np.log10(radial_ps))
         # axes[i, 2].imshow(10.0 * np.log10(power_spectrum), cmap="viridis")
-        axes[i, 2].set_title(f"Radial Power Spectrum {i+1}")
+        axes[i, 2].set_title(f"Radial Power Spectrum {i + 1}")
         axes[i, 2].set_xscale("log")
         axes[i, 2].axis("tight")
-        axes[i, 2].set_ylim(-100, 0)
+        axes[i, 2].set_ylim(-60, axes[i, 2].get_ylim()[1])
+        axes[i, 2].set_xlim(axes[i, 2].get_xlim()[0], 10)
         # axes[i, 2].set_xlabel("Radial Frequency")
         # axes[i, 2].set_ylabel("Power")
         # axes[i, 2].grid(True, alpha=0.3)

@@ -25,23 +25,23 @@ class TrainingConfig:
     # Model parameters
     kernel_size: int = 24
     kernel_length: int = 24
-    n_kernels: int = 108
+    n_kernels: int = 96
     fs: int = 1000  # Hz
     ppd: int = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: List[int] = field(default_factory=lambda: [0, 5])
+    temporal_pad: List[int] = field(default_factory=lambda: [0, 3])
 
     # Training parameters
     batch_size: int = 16
-    total_iterations: int = 4_000_000
-    log_iterations: int = 1000
-    checkpoint_iterations: int = 50_000
+    total_iterations: int = 500_000
+    log_iterations: int = 2500
+    checkpoint_iterations: int = 100_000
 
     # Loss weights
-    alpha: float = 5e-1  # Temporal jerk energy (smoothness)
-    delta: float = 5e-1  # Spatial jerk energy (smoothness)
-    beta: float = 1e-1  # Firing rate (encoder output)
-    gamma: float = 1e1  # Regularization
+    alpha: float = 1e-2  # Temporal jerk energy (smoothness)
+    delta: float = 1e-4  # Spatial jerk energy (smoothness)
+    beta: float = 1e-5  # Firing rate (encoder output)
+    gamma: float = 1e-5  # Regularization
 
     # Checkpoint loading
     load_checkpoint: bool = False
@@ -316,20 +316,22 @@ class Trainer:
         gamma = gamma if gamma is not None else self.config.gamma
 
         # Compute losses
-        loss_mse = torch.nn.functional.l1_loss(
+        loss_mse = torch.nn.functional.mse_loss(
             self.current_reconstruction, self.current_target
         )
         loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
-        loss_jerk_spatial = delta * self.model.kernel_spatial_jerk()
+        # loss_jerk_spatial = delta * self.model.kernel_spatial_jerk()
+        loss_jerk_spatial = delta * self.model.kernel_variance()
         loss_fr = beta * out.abs().mean()
         loss_reg = gamma * (
-            self.model.spatial_kernels.square().mean()
-            + self.model.temporal_kernels.square().mean()
-            + self.model.spatial_decoder.square().mean()
+            self.model.spatial_kernels.square().sum()
+            # + self.model.temporal_kernels.square().mean()
+            + self.model.spatial_decoder.square().sum()
         )
 
         # Total loss - now using all components
-        loss = loss_mse + loss_jerk_temporal + loss_jerk_spatial + loss_fr + loss_reg
+        # loss = loss_mse + loss_jerk_temporal + loss_jerk_spatial + loss_fr + loss_reg
+        loss = loss_mse + loss_fr + loss_reg + loss_jerk_spatial
 
         if torch.isnan(loss):
             print(f"NaN detected in loss at iteration {self.iteration}, skipping.")
@@ -468,7 +470,7 @@ class Trainer:
 
     def _run_training_loop(self):
         """Internal method for the main training loop."""
-        iterations = self.config.total_iterations // self.config.batch_size
+        iterations = self.config.total_iterations
 
         progress_bar = trange(
             self.iteration,
