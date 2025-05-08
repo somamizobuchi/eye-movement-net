@@ -157,7 +157,7 @@ class Trainer:
         self.dataset = VideoDataset(
             "data/pink_noise_videos.npy",
             self.config.kernel_size,
-            self.config.drift_samples,
+            self.config.kernel_length * 2 - 1,
         )
 
         self.data_loader = DataLoader(

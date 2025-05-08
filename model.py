@@ -84,19 +84,6 @@ class Encoder(nn.Module):
             self.temporal_kernels, self.temporal_pad, "constant", 0
         )
 
-    def temporal_kernels_full(self, input: torch.Tensor) -> torch.Tensor:
-        return torch.concat(
-            (
-                input,
-                torch.zeros(
-                    [self.n_kernels, self.temporal_delay],
-                    dtype=torch.float,
-                    device=input.device,
-                ),
-            ),
-            dim=1,
-        )
-
     def kernel_spatial_jerk(self):
         padded = F.pad(
             self.spatial_kernels.view(-1, self.kernel_size, self.kernel_size),
