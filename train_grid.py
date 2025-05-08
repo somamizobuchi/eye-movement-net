@@ -3,7 +3,7 @@ import signal
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import itertools
 
 import fire
@@ -27,9 +27,9 @@ class TrainingConfig:
     kernel_length: int = 24
     n_kernels: int = 96
     fs: int = 1000  # Hz
-    ppd: int = 180.0  # pixels per degree
+    ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: List[int] = field(default_factory=lambda: [0, 3])
+    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 3))
 
     # Training parameters
     batch_size: int = 16
