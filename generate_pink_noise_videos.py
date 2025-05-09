@@ -2,7 +2,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 from utils import implay
-from fixation_utils import generate_pink_noise_movie, generate_3d_pink_noise
+from fixation_utils import generate_pink_noise_movie
 
 
 if __name__ == "__main__":
@@ -11,7 +11,7 @@ if __name__ == "__main__":
     NX = 128  # Size of each image
     NT = 128  # Number of time frames
     alpha_x = 1  # Pink noise parameter
-    alpha_t = 2  # Pink noise parameter
+    alpha_t = 1  # Pink noise parameter
 
     # Create directory if it doesn't exist
     save_dir = "data/natural_noise"

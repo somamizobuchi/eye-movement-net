@@ -11,8 +11,8 @@ if __name__ == "__main__":
     NX = 128  # Size of each image
     NT = 128
     D = 20 / 3600
-    alpha = 2.0  # Pink noise parameter
-    fs = 480
+    alpha = 1.0  # Pink noise parameter
+    fs = 1000
     ppd = 240
 
     # Create directory if it doesn't exist

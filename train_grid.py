@@ -29,7 +29,7 @@ class TrainingConfig:
     fs: int = 1000  # Hz
     ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 3))
+    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 1))
 
     # Training parameters
     batch_size: int = 16
@@ -38,10 +38,19 @@ class TrainingConfig:
     checkpoint_iterations: int = 100_000
 
     # Loss weights
-    alpha: float = 1e-2  # Temporal jerk energy (smoothness)
-    delta: float = 1e-4  # Spatial jerk energy (smoothness)
+    #### Params for natural noise
+    alpha: float = 10  # Temporal jerk energy (smoothness)
+    delta: float = 5e-4  # Spatial jerk energy (smoothness)
     beta: float = 1e-5  # Firing rate (encoder output)
-    gamma: float = 1e-5  # Regularization
+    gamma: float = 1e-3  # Regularization
+    theta: float = 1e-1  # Temporal filter regularization
+
+    #### Params for fixation videos
+    # alpha: float = 1e-2  # Temporal jerk energy (smoothness)
+    # delta: float = 1e-4  # Spatial jerk energy (smoothness)
+    # beta: float = 1e-5  # Firing rate (encoder output)
+    # gamma: float = 1e-4  # Regularization
+    # theta: float = 1e-2  # Temporal filter regularization
 
     # Checkpoint loading
     load_checkpoint: bool = False
@@ -71,9 +80,10 @@ class Trainer:
             "loss": 0.0,
             "mse": 0.0,
             "jerk_temporal": 0.0,
-            "jerk_spatial": 0.0,
+            "spatial_variance": 0.0,
             "reg": 0.0,
             "fr": 0.0,
+            "reg_temporal": 0.0,
         }
 
     def setup_paths(self):
@@ -290,7 +300,7 @@ class Trainer:
         ax.plot(kernels.numpy().T)
         return fig
 
-    def train_step(self, alpha=None, delta=None, beta=None, gamma=None):
+    def train_step(self, alpha=None, delta=None, beta=None, gamma=None, theta=None):
         """
         Execute single training step.
 
@@ -304,9 +314,9 @@ class Trainer:
         out, fr = self.model(retinal_input.clone().to(self.config.device))
 
         # Current
-        self.current_target = retinal_input[:, self.model.kernel_length - 1 :].to(
-            self.config.device
-        )
+        self.current_target = retinal_input[
+            :, self.model.kernel_length - 1 - 5 : -5
+        ].to(self.config.device)
         self.current_reconstruction = out
 
         # Use provided loss weights or fall back to config values
@@ -314,6 +324,7 @@ class Trainer:
         delta = delta if delta is not None else self.config.delta
         beta = beta if beta is not None else self.config.beta
         gamma = gamma if gamma is not None else self.config.gamma
+        theta = theta if theta is not None else self.config.theta
 
         # Compute losses
         loss_mse = torch.nn.functional.mse_loss(
@@ -321,17 +332,18 @@ class Trainer:
         )
         loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
         # loss_jerk_spatial = delta * self.model.kernel_spatial_jerk()
-        loss_jerk_spatial = delta * self.model.kernel_variance()
+        loss_spatial_variance = delta * self.model.kernel_variance()
         loss_fr = beta * out.abs().mean()
         loss_reg = gamma * (
             self.model.spatial_kernels.square().sum()
-            # + self.model.temporal_kernels.square().mean()
             + self.model.spatial_decoder.square().sum()
         )
+        loss_treg = theta * self.model.temporal_kernels.square().mean()
 
         # Total loss - now using all components
         # loss = loss_mse + loss_jerk_temporal + loss_jerk_spatial + loss_fr + loss_reg
-        loss = loss_mse + loss_fr + loss_reg + loss_jerk_spatial
+        # loss = loss_mse + loss_fr + loss_reg + loss_jerk_spatial
+        loss = loss_mse + loss_reg + loss_spatial_variance + loss_treg
 
         if torch.isnan(loss):
             print(f"NaN detected in loss at iteration {self.iteration}, skipping.")
@@ -345,9 +357,10 @@ class Trainer:
             self.running_metrics["loss"] += loss.item()
             self.running_metrics["mse"] += loss_mse.item()
             self.running_metrics["jerk_temporal"] += loss_jerk_temporal.item()
-            self.running_metrics["jerk_spatial"] += loss_jerk_spatial.item()
+            self.running_metrics["spatial_variance"] += loss_spatial_variance.item()
             self.running_metrics["fr"] += loss_fr.item()
             self.running_metrics["reg"] += loss_reg.item()
+            self.running_metrics["reg_temporal"] += loss_treg.item()
 
         return loss.item()
 
@@ -367,6 +380,7 @@ class Trainer:
                 "delta": [1e-2, 5e-2, 1e-1, 5e-1, 1e0],
                 "beta": [1e-3, 1e-2, 5e-2, 1e-1, 5e-1],
                 "gamma": [1e-1, 1e0, 1e1, 1e2],
+                "theta": [1e-1, 1e0, 1e1, 1e2],
             }
 
         # Generate all combinations of parameters
@@ -535,6 +549,7 @@ def main(
         "beta_values": "beta",
         "delta_values": "delta",
         "gamma_values": "gamma",
+        "theta_values": "theta",
     }
 
     # Parse grid search parameters
