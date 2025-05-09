@@ -39,15 +39,12 @@ class TrainingConfig:
 
     # Loss weights
     #### Params for natural noise
-    alpha: float = 10  # Temporal jerk energy (smoothness)
-    delta: float = 5e-4  # Spatial jerk energy (smoothness)
-    beta: float = 1e-5  # Firing rate (encoder output)
-    gamma: float = 1e-3  # Regularization
-    theta: float = 1e-1  # Temporal filter regularization
+    sigma: float = 5e-4  # Spatial kernel variance
+    gamma: float = 1e-3  # Spatial kernel regularization
+    theta: float = 1e-1  # Temporal kernel regularization
 
     #### Params for fixation videos
-    # alpha: float = 1e-2  # Temporal jerk energy (smoothness)
-    # delta: float = 1e-4  # Spatial jerk energy (smoothness)
+    # sigma: float = 1e-4  # Spatial jerk energy (smoothness)
     # beta: float = 1e-5  # Firing rate (encoder output)
     # gamma: float = 1e-4  # Regularization
     # theta: float = 1e-2  # Temporal filter regularization
@@ -81,8 +78,8 @@ class Trainer:
             "mse": 0.0,
             "jerk_temporal": 0.0,
             "spatial_variance": 0.0,
-            "reg": 0.0,
-            "fr": 0.0,
+            "reg_spatial": 0.0,
+            "firing_rate": 0.0,
             "reg_temporal": 0.0,
         }
 
@@ -300,12 +297,12 @@ class Trainer:
         ax.plot(kernels.numpy().T)
         return fig
 
-    def train_step(self, alpha=None, delta=None, beta=None, gamma=None, theta=None):
+    def train_step(self, sigma=None, gamma=None, theta=None):
         """
         Execute single training step.
 
         Args:
-            alpha, delta, beta, gamma: Optional override values for the loss weights.
+            alpha, sigma, beta, gamma: Optional override values for the loss weights.
                 If not provided, uses the values from config.
         """
         retinal_input = next(iter(self.data_loader))
@@ -314,15 +311,13 @@ class Trainer:
         out, fr = self.model(retinal_input.clone().to(self.config.device))
 
         # Current
-        self.current_target = retinal_input[
-            :, self.model.kernel_length - 1 - 5 : -5
-        ].to(self.config.device)
+        self.current_target = retinal_input[:, self.model.kernel_length - 1 :].to(
+            self.config.device
+        )
         self.current_reconstruction = out
 
         # Use provided loss weights or fall back to config values
-        alpha = alpha if alpha is not None else self.config.alpha
-        delta = delta if delta is not None else self.config.delta
-        beta = beta if beta is not None else self.config.beta
+        sigma = sigma if sigma is not None else self.config.sigma
         gamma = gamma if gamma is not None else self.config.gamma
         theta = theta if theta is not None else self.config.theta
 
@@ -330,20 +325,19 @@ class Trainer:
         loss_mse = torch.nn.functional.mse_loss(
             self.current_reconstruction, self.current_target
         )
-        loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
-        # loss_jerk_spatial = delta * self.model.kernel_spatial_jerk()
-        loss_spatial_variance = delta * self.model.kernel_variance()
-        loss_fr = beta * out.abs().mean()
-        loss_reg = gamma * (
+        # loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
+        # loss_jerk_spatial = sigma * self.model.kernel_spatial_jerk()
+        loss_spatial_variance = sigma * self.model.kernel_variance()
+        loss_sreg = gamma * (
             self.model.spatial_kernels.square().sum()
             + self.model.spatial_decoder.square().sum()
         )
         loss_treg = theta * self.model.temporal_kernels.square().mean()
 
         # Total loss - now using all components
-        # loss = loss_mse + loss_jerk_temporal + loss_jerk_spatial + loss_fr + loss_reg
-        # loss = loss_mse + loss_fr + loss_reg + loss_jerk_spatial
-        loss = loss_mse + loss_reg + loss_spatial_variance + loss_treg
+        loss = loss_mse + loss_sreg + loss_spatial_variance + loss_treg
+
+        firing_rate = out.abs().mean()
 
         if torch.isnan(loss):
             print(f"NaN detected in loss at iteration {self.iteration}, skipping.")
@@ -356,10 +350,9 @@ class Trainer:
         with torch.no_grad():
             self.running_metrics["loss"] += loss.item()
             self.running_metrics["mse"] += loss_mse.item()
-            self.running_metrics["jerk_temporal"] += loss_jerk_temporal.item()
             self.running_metrics["spatial_variance"] += loss_spatial_variance.item()
-            self.running_metrics["fr"] += loss_fr.item()
-            self.running_metrics["reg"] += loss_reg.item()
+            self.running_metrics["firing_rate"] += firing_rate.item()
+            self.running_metrics["reg_spatial"] += loss_sreg.item()
             self.running_metrics["reg_temporal"] += loss_treg.item()
 
         return loss.item()
@@ -376,9 +369,7 @@ class Trainer:
         # Default grid search parameters if none provided
         if not grid_params:
             grid_params = {
-                "alpha": [1e-2, 5e-2, 1e-1, 5e-1, 1e0],
-                "delta": [1e-2, 5e-2, 1e-1, 5e-1, 1e0],
-                "beta": [1e-3, 1e-2, 5e-2, 1e-1, 5e-1],
+                "sigma": [1e-2, 5e-2, 1e-1, 5e-1, 1e0],
                 "gamma": [1e-1, 1e0, 1e1, 1e2],
                 "theta": [1e-1, 1e0, 1e1, 1e2],
             }
@@ -539,15 +530,13 @@ def main(
 
     Grid Search Usage:
         python train_main.py --grid_search=True --grid_search_iterations=10000
-                            --alpha_values=0.1,0.5,1.0 --delta_values=0.1,0.5,1.0
+                            --alpha_values=0.1,0.5,1.0 --sigma_values=0.1,0.5,1.0
                             --beta_values=0.01,0.1,0.5 --gamma_values=0.1,1.0,10.0
     """
     # Handle grid search parameters if provided
     grid_params = {}
     param_keys = {
-        "alpha_values": "alpha",
-        "beta_values": "beta",
-        "delta_values": "delta",
+        "sigma_values": "sigma",
         "gamma_values": "gamma",
         "theta_values": "theta",
     }
