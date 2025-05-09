@@ -1,3 +1,3 @@
 #!/bin/sh
 
-uv run train_grid.py --grid_search=True --grid_search_iterations=500000 --alpha_values "[0.01]" --delta_values "[0.1, 1.0]" --gamma_values "[0.01]" --beta_values "[0.01]" --device="cpu"
+uv run train_grid.py --grid_search=True --grid_search_iterations=100000 --gamma_values "[1e-3]" --sigma_values "[1e-4, 1e-3, 1e-2]" --theta_values "[1e-2, 1e-1, 1]" --device="cpu"

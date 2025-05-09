@@ -11,7 +11,7 @@ class Encoder(nn.Module):
         temporal_kernel_length: int = 32,
         n_kernels: int = 32,
         f_samp_hz: float = 240,
-        temporal_pad: Tuple[int, int] = (7, 2),
+        temporal_pad: Tuple[int, int] = (0, 0),
     ):
         super().__init__()
         self.kernel_size = spatial_kernel_size
@@ -19,8 +19,6 @@ class Encoder(nn.Module):
         self.n_kernels = n_kernels
         self.fs = f_samp_hz
         self.temporal_pad = temporal_pad
-        # Soft-plus activation second dim [beta, threshold]
-        # self.softplus_params = torch.nn.Parameter(torch.zeros([n_kernels, 2]))
 
         self.spatial_kernels = torch.nn.Parameter(
             torch.full([self.n_kernels, self.kernel_size**2], 0.0)
@@ -28,21 +26,14 @@ class Encoder(nn.Module):
         self.temporal_kernels = torch.nn.Parameter(
             torch.full([n_kernels, self.kernel_length - sum(self.temporal_pad)], 0.0)
         )
-        # self.spatial_decoder = torch.nn.Linear(
-        #     n_kernels, self.kernel_size**2, bias=False
-        # )
         self.spatial_decoder = torch.nn.Parameter(
             torch.full([self.n_kernels, self.kernel_size**2], 0.0)
         )
-        # self.temporal_decoder = torch.nn.Parameter(
-        #     torch.full([self.n_kernels, 45], 0.0)
-        # )
 
         # initialize parameters
         torch.nn.init.xavier_normal_(self.spatial_kernels)
         torch.nn.init.xavier_normal_(self.temporal_kernels)
         torch.nn.init.xavier_normal_(self.spatial_decoder)
-        # torch.nn.init.xavier_normal_(self.temporal_decoder)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.st_conv(x)
@@ -64,14 +55,13 @@ class Encoder(nn.Module):
         x = torch.nan_to_num(x, 1e-6)
 
         # Apply non-linearity
-        x = F.relu(x)
-        x = x + 0.1 * torch.randn_like(x)
-        # x = x + torch.poisson(x)
+        x = F.softplus(x)
+        # x = x + 0.1 * torch.randn_like(x)
+        x = x + torch.poisson(x)
 
         encoder_output = x.clone()
 
         # Decoder
-        # x = x * self.temporal_decoder.unsqueeze(0)
         x = x.transpose_(1, -1) @ self.spatial_decoder
 
         # Reshape to original frame dimensions (B, T, X, Y)
@@ -82,19 +72,6 @@ class Encoder(nn.Module):
     def pad_temporal(self) -> torch.Tensor:
         return torch.nn.functional.pad(
             self.temporal_kernels, self.temporal_pad, "constant", 0
-        )
-
-    def temporal_kernels_full(self, input: torch.Tensor) -> torch.Tensor:
-        return torch.concat(
-            (
-                input,
-                torch.zeros(
-                    [self.n_kernels, self.temporal_delay],
-                    dtype=torch.float,
-                    device=input.device,
-                ),
-            ),
-            dim=1,
         )
 
     def kernel_spatial_jerk(self):
@@ -129,14 +106,7 @@ class Encoder(nn.Module):
 
     def kernel_temporal_jerk(self):
         padded = F.pad(self.temporal_kernels, (1, 0), mode="constant", value=0)
-        return (
-            padded.diff(
-                dim=1,
-            )
-            .square()
-            .mean(dim=1)
-            .mean()
-        )
+        return padded.diff(dim=1, n=2).square().mean(dim=1).mean()
 
     def kernel_variance(self):
         """
