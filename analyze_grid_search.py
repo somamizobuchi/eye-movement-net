@@ -149,6 +149,80 @@ def plot_combined_kernels(model, save_path=None, title=None, max_kernels=None):
         plt.show()
 
 
+def plot_radial_spectra_overlay(model, save_path=None, title=None, max_kernels=None):
+    """
+    Create a plot with all radial power spectra overlaid for comparison.
+
+    Args:
+        model: The encoder model
+        save_path: Path to save the plot (optional)
+        title: Title for the plot (optional)
+        max_kernels: Maximum number of kernels to plot
+    """
+    # Get kernels
+    with torch.no_grad():
+        spatial_kernels = model.spatial_kernels.detach().cpu().numpy()
+
+    # Determine kernel size
+    kernel_size = int(np.sqrt(spatial_kernels.shape[1]))
+
+    # Number of kernels to plot (limit to max_kernels)
+    if max_kernels is not None:
+        n_kernels = min(spatial_kernels.shape[0], max_kernels)
+    else:
+        n_kernels = spatial_kernels.shape[0]
+
+    # Create figure
+    plt.figure(figsize=(10, 6))
+    
+    # Colors for different kernels
+    colors = plt.cm.viridis(np.linspace(0, 1, n_kernels))
+    
+    # Process each kernel
+    for i in range(n_kernels):
+        # Reshape the spatial kernel into 2D
+        spatial_kernel = spatial_kernels[i].reshape(kernel_size, kernel_size)
+        
+        # Normalize for visualization
+        spatial_kernel = (spatial_kernel - spatial_kernel.min()) / (
+            spatial_kernel.max() - spatial_kernel.min() + 1e-8
+        )
+        
+        # Calculate power spectrum
+        power_spectrum = (
+            np.abs(
+                np.fft.fftshift(
+                    np.fft.fft2(spatial_kernel - spatial_kernel.mean())
+                    / spatial_kernel.size
+                )
+            )
+            ** 2
+        )
+        
+        # Calculate radial power spectrum
+        radial_ps = dip.RadialMean(power_spectrum, binSize=1)
+        
+        # Plot the radial power spectrum
+        plt.plot(10.0 * np.log10(radial_ps), color=colors[i], label=f"Kernel {i+1}")
+    
+    # Set plot properties
+    plt.title(title if title else "Overlay of All Radial Power Spectra")
+    plt.xlabel("Radial Frequency")
+    plt.ylabel("Power (dB)")
+    plt.xscale("log")
+    plt.xlim(1, 10)  # Similar to original plot
+    plt.ylim(-60, None)  # Start at -60 dB, like original plot
+    plt.grid(True, alpha=0.3)
+    # plt.legend(loc='upper right', fontsize='small')
+    
+    # Save or show
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
+
+
 def load_model_from_checkpoint(checkpoint_path, device="cpu"):
     """
     Load model from a checkpoint file.
@@ -251,12 +325,22 @@ def analyze_grid_search(grid_dir, max_kernels=10, device="cpu"):
                 title=title,
                 max_kernels=max_kernels,
             )
+            
+            # Plot and save radial spectra overlay
+            radial_overlay_save_path = plots_dir / f"{run_id}_radial_overlay.png"
+            plot_radial_spectra_overlay(
+                model,
+                save_path=radial_overlay_save_path,
+                title=f"Radial Spectra Overlay - {run_id}: {params_str}",
+                max_kernels=max_kernels,
+            )
 
             # Add to summary file
             with open(summary_path, "a") as summary_file:
                 summary_file.write(f"Run: {run_id}\n")
                 summary_file.write(f"Parameters: {params_str}\n")
-                summary_file.write(f"Plot: {run_id}_combined.png\n\n")
+                summary_file.write(f"Combined Plot: {run_id}_combined.png\n")
+                summary_file.write(f"Radial Overlay: {run_id}_radial_overlay.png\n\n")
 
             # print(f"  Saved combined plot to {combined_save_path}")
             pbar.set_postfix_str(f"Saved to {combined_save_path}")
