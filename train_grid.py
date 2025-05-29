@@ -29,7 +29,7 @@ class TrainingConfig:
     fs: int = 1000  # Hz
     ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 1))
+    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 4))
 
     # Training parameters
     batch_size: int = 16
@@ -39,15 +39,14 @@ class TrainingConfig:
 
     # Loss weights
     #### Params for natural noise
-    sigma: float = 5e-4  # Spatial kernel variance
-    gamma: float = 1e-3  # Spatial kernel regularization
-    theta: float = 1e-1  # Temporal kernel regularization
+    # sigma: float = 5e-4  # Spatial kernel variance
+    # gamma: float = 1e-3  # Spatial kernel regularization
+    # theta: float = 1e-1  # Temporal kernel regularization
 
     #### Params for fixation videos
-    # sigma: float = 1e-4  # Spatial jerk energy (smoothness)
-    # beta: float = 1e-5  # Firing rate (encoder output)
-    # gamma: float = 1e-4  # Regularization
-    # theta: float = 1e-2  # Temporal filter regularization
+    sigma: float = 1e-4  # Spatial jerk energy (smoothness)
+    gamma: float = 1e-5  # Regularization
+    theta: float = 1e-2  # Temporal filter regularization
 
     # Checkpoint loading
     load_checkpoint: bool = False
@@ -162,7 +161,7 @@ class Trainer:
             print(f"Loaded checkpoint from {checkpoint_path}")
 
         self.dataset = VideoDataset(
-            "data/pink_noise_videos.npy",
+            "data/em_videos.npy",
             self.config.kernel_size,
             self.config.kernel_length * 2 - 1,
         )

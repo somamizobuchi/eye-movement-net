@@ -197,7 +197,7 @@ def natural_noise(size):
 
 
 def brownian_eye_trace(
-    D: np.double, fs: int, n: int, rng: np.random.Generator = None
+    D: np.double, fs: float, n: int, rng: np.random.Generator = None
 ) -> np.array:
     """
     Creates simulated eye traces based on brownian motion
@@ -206,7 +206,7 @@ def brownian_eye_trace(
     ----------
     D : double
         diffusion constant in arcmin^2/sec
-    fs : int
+    fs : float
         sampling frequency in Hz
     n : int
         number of samples to generate
@@ -270,28 +270,32 @@ def implay(seq, interval=20, repeat=False, repeat_delay=-1, save_name: str = Non
 
     plt.show()
 
+import numpy as np
 
-def generate_saccade(amplitude_deg: float, angle_radians: float, fs: int = 1000):
-    """
-    Generates a saccade from cumulative gaussian function
 
-    Parameters
-    ----------
-    amplitude_deg : float
-        The saccade amplitude in degrees
-    angle_radians : float
-        The saccade angle (direction) in radians
-    fs : int
-        The sampling frequency in Hz
-    """
-    # From gaussian
-    peak_velocity = 150 * np.sqrt(amplitude_deg)
-    sigma = 1 / ((peak_velocity / amplitude_deg) * np.sqrt(2 * np.pi))
-    t = np.arange(-sigma * 3, sigma * 3, 1 / fs)
-    pos = amplitude_deg * norm.cdf(t, loc=0, scale=sigma)
-    x = np.cos(angle_radians) * pos
-    y = np.sin(angle_radians) * pos
-    return np.vstack((x, y))
+
+
+# def generate_saccade(amplitude_deg: float, angle_radians: float, fs: int = 1000):
+#     """
+#     Generates a saccade from cumulative gaussian function
+
+#     Parameters
+#     ----------
+#     amplitude_deg : float
+#         The saccade amplitude in degrees
+#     angle_radians : float
+#         The saccade angle (direction) in radians
+#     fs : int
+#         The sampling frequency in Hz
+#     """
+#     # From gaussian
+#     peak_velocity = 150 * np.sqrt(amplitude_deg)
+#     sigma = 1 / ((peak_velocity / amplitude_deg) * np.sqrt(2 * np.pi))
+#     t = np.arange(-sigma * 3, sigma * 3, 1 / fs)
+#     pos = amplitude_deg * norm.cdf(t, loc=0, scale=sigma)
+#     x = np.cos(angle_radians) * pos
+#     y = np.sin(angle_radians) * pos
+#     return np.vstack((x, y))
 
 
 def gen_em_sequence(pre_saccade_drift_samples: int, fs: float, diffusion_const: float):
