@@ -5,12 +5,17 @@ from utils import implay
 from fixation_utils import pink_noise_gray_image
 from em_utils import generate_brownian_motion, generate_saccade
 from scipy.stats import gamma
+from scipy.ndimage import convolve1d
+from skimage.transform import rescale
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import cv2
 import subprocess
 import os
+from utils import generate_rgc_impulse_response, generate_rgc_spatial_rf
 
+def NormalizeData(data):
+    return (data - np.min(data)) / (np.max(data) - np.min(data))
 
 def save_array_as_mp4_opencv(array_3d, output_path, fps=30):
     """
@@ -40,18 +45,36 @@ def save_array_as_mp4_opencv(array_3d, output_path, fps=30):
 
 if __name__ == "__main__":
     # Parameters
-    num_movies = 10  # Number of images to generate
+    num_movies = 1  # Number of images to generate
     NX = 128  # Size of each image
     NT = 1024
     D = 20 / 3600
     alpha = 1.0  # Pink noise parameter
-    fs = 1000
-    ppd = 240
+    fs = 240
+    ppd = 30
+    l_filt = 24
+
+    NT_PAD = NT + l_filt - 1
 
     generate_video_file = True  # Whether or not to save an mp4 of a sample video
     save_data = False            # Whether or not to save npy file containing all data
-    plot_figures = True
+    plot_figures = False
     play_video = False
+
+    cell_type = "M"
+    eccentricity = 1.0
+
+    _, _, hx = generate_rgc_spatial_rf(cell_type=cell_type, eccentricity=eccentricity, resolution=ppd, size_samples=24)
+    _, ht = generate_rgc_impulse_response(cell_type=cell_type, num_samples=l_filt, fs=fs)
+
+
+    fig, ax = plt.subplots(2, 1)
+    ax[0].imshow(hx, cmap="viridis")
+    ax[0].axis("off")
+    ax[1].plot(ht)
+    fig.savefig("figures/filters.png")
+
+
 
     # Fixation duration distr params
     alpha = 1.5
@@ -61,9 +84,10 @@ if __name__ == "__main__":
     beta_sacc = 4.87
 
 
-    imsize = 4096
+    imsize = 2048
 
-    out = np.zeros([num_movies, NT, NX, NX])
+    input = np.zeros([num_movies, NT, NX, NX])
+    output = np.zeros([num_movies, NT, NX, NX])
     em = []
     fixation_durations = []
     saccade_amps = []
@@ -74,12 +98,13 @@ if __name__ == "__main__":
         # Generate image every 10 EMs
         if i % 10 == 0:
             img = pink_noise_gray_image(imsize)
+            img_filt = cv2.filter2D(img, -1, hx)
 
         if not em_carryover:
             # Choose a random point in image to start
             eye_idx = np.random.randint((NX/2, imsize-3*NX/2), size=(2, 1))
 
-        while eye_idx.shape[1] < NT:
+        while eye_idx.shape[1] < NT_PAD:
             # Generate drift
             while True:
                 drift_dur = gamma.rvs(alpha, loc=0, scale=beta)
@@ -107,17 +132,24 @@ if __name__ == "__main__":
             eye_idx = np.concat((eye_idx, sacc.round().astype(int)), axis=1)
 
         # Trim to fit and save carryover
-        if eye_idx.shape[1] > NT:
-            eye_res = eye_idx[:,NT:]
-            eye_idx = eye_idx[:,:NT]
+        if eye_idx.shape[1] > NT_PAD:
+            eye_res = eye_idx[:,NT_PAD:]
+            eye_idx = eye_idx[:,:NT_PAD:]
             em_carryover = True
         else:
             em_carryover = False
 
         em.append(eye_idx)
 
-        for fi in range(NT):
-            out[i,fi,:,:] = img[eye_idx[1,fi]:eye_idx[1,fi]+NX, eye_idx[0,fi]:eye_idx[0,fi]+NX]
+        input_tmp = np.zeros([NT_PAD, NX, NX])
+        output_tmp = np.zeros([NT_PAD, NX, NX])
+
+        for fi in range(NT_PAD):
+            input_tmp[fi,:,:] = img[eye_idx[1,fi]:eye_idx[1,fi]+NX, eye_idx[0,fi]:eye_idx[0,fi]+NX]
+            output_tmp[fi,:,:] = img_filt[eye_idx[1,fi]:eye_idx[1,fi]+NX, eye_idx[0,fi]:eye_idx[0,fi]+NX]
+
+        input[i,:] = input_tmp[l_filt//2-1:-l_filt//2,:]
+        output[i,:] = convolve1d(output_tmp, ht, 0)[:NT,:]
         
         if em_carryover:
             eye_idx = eye_res
@@ -195,12 +227,14 @@ if __name__ == "__main__":
 
 
     if play_video:
-        implay(out[-1].transpose(1, 2, 0), interval=10, repeat=True)
+        implay(input[-1].transpose(1, 2, 0), interval=10, repeat=True)
+        # implay(output[-1].transpose(1, 2, 0), interval=10, repeat=True)
 
     if generate_video_file:
-        input_file = "data/retinal_input.mp4"
-        output_file = "data/retinal_input_web.mp4"
-        save_array_as_mp4_opencv(out[-1], input_file, fps=30)
+        out_vid = np.concat((NormalizeData(input[-1]), NormalizeData(output[-1])), axis=2)
+        input_file = "data/retinal_input_filt.mp4"
+        output_file = "data/retinal_input_filt_web.mp4"
+        save_array_as_mp4_opencv(out_vid, input_file, fps=30)
 
         # Convert codec
         if not os.path.exists(input_file):
@@ -213,10 +247,10 @@ if __name__ == "__main__":
             "-y",
             output_file
         ]
-
         subprocess.run(command, check=True) # check=True will raise CalledProcessError on non-zero exit code
 
     if save_data:
-        np.save("data/em_videos.npy", out)
+        np.save("data/em_videos_raw.npy", input)
+        np.save("data/em_videos_filt.npy", output)
         print("Done! All images generated and saved.")
 

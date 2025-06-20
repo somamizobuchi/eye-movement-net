@@ -56,8 +56,8 @@ class Encoder(nn.Module):
 
         # Apply non-linearity
         x = F.softplus(x)
-        # x = x + 0.1 * torch.randn_like(x)
-        x = x + torch.poisson(x)
+        x = x + 0.1 * torch.randn_like(x)
+        # x = x + torch.poisson(x)
 
         encoder_output = x.clone()
 

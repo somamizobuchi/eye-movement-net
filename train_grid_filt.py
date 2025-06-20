@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import trange
 
-from datasets import VideoDataset
+from datasets import FilteredVideoDataset as VideoDataset
 from model import Encoder
 from utils import (
     rescale,
@@ -29,7 +29,7 @@ class TrainingConfig:
     fs: int = 1000  # Hz
     ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 4))
+    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 1))
 
     # Training parameters
     batch_size: int = 16
@@ -45,8 +45,11 @@ class TrainingConfig:
 
     #### Params for fixation videos
     sigma: float = 1e-4  # Spatial jerk energy (smoothness)
-    gamma: float = 1e-6  # Regularization
-    theta: float = 1e-3  # Temporal filter regularization
+    gamma: float = 1e-5  # Regularization
+    theta: float = 1e-2  # Temporal filter regularization
+    # sigma: float = 0  # Spatial jerk energy (smoothness)
+    # gamma: float = 0  # Regularization
+    # theta: float = 0  # Temporal filter regularization
 
     # Checkpoint loading
     load_checkpoint: bool = False
@@ -161,7 +164,8 @@ class Trainer:
             print(f"Loaded checkpoint from {checkpoint_path}")
 
         self.dataset = VideoDataset(
-            "data/em_videos.npy",
+            "data/em_videos_raw.npy",
+            "data/em_videos_filt.npy",
             self.config.kernel_size,
             self.config.kernel_length * 2 - 1,
         )
@@ -304,13 +308,13 @@ class Trainer:
             alpha, sigma, beta, gamma: Optional override values for the loss weights.
                 If not provided, uses the values from config.
         """
-        retinal_input = next(iter(self.data_loader))
+        retinal_input, retinal_output = next(iter(self.data_loader))
 
         self.optimizer.zero_grad()
         out, fr = self.model(retinal_input.clone().to(self.config.device))
 
         # Current
-        self.current_target = retinal_input[:, self.model.kernel_length - 1 :].to(
+        self.current_target = retinal_output[:, self.model.kernel_length - 1 :].to(
             self.config.device
         )
         self.current_reconstruction = out

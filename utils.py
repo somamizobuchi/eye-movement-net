@@ -408,3 +408,149 @@ def accumulate_frames(frames: torch.Tensor, offset_indices: torch.Tensor):
         ]
 
     return reconstructed / frames.shape[0]
+
+
+def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
+    """
+    Generates the temporal impulse response for a primate retinal ganglion cell.
+
+    This function is based on the linear cascade model described by
+    Bernadete and Kaplan. It computes the response for either a
+    Parvocellular (P) or Magnocellular (M) cell.
+
+    Args:
+        cell_type (str): The type of ganglion cell. Can be 'P' for Parvocellular
+                         or 'M' for Magnocellular. Defaults to 'P'.
+        num_samples (int): The total number of samples in the impulse response.
+                           Defaults to 100.
+        fs (int): The sampling frequency in Hertz. Defaults to 1000 Hz.
+
+    Returns:
+        tuple: A tuple containing:
+            - t (numpy.ndarray): The time vector for the impulse response.
+            - combined_response (numpy.ndarray): The impulse response waveform,
+              representing the combined effect of the center and surround.
+    """
+    # --- 1. Set Parameters based on Cell Type ---
+    if cell_type.upper() == 'P':
+        # Parameters for P-cells (slower, more sustained response)
+        n = 5  # Number of cascaded filter stages
+        tau = 5.9 / 1000  # Time constant in seconds (5.9 ms)
+        surround_delay = 3.5 / 1000 # Average surround delay in seconds (3.5 ms)
+        surround_gain = 0.9 # Relative gain of the surround
+    elif cell_type.upper() == 'M':
+        # Parameters for M-cells (faster, more transient response)
+        n = 3  # Number of cascaded filter stages
+        tau = 4.0 / 1000  # Time constant in seconds (4.0 ms)
+        surround_delay = 3.5 / 1000 # Average surround delay in seconds (3.5 ms)
+        surround_gain = 0.95 # Relative gain of the surround
+    else:
+        raise ValueError("Invalid cell_type. Choose 'P' or 'M'.")
+
+    # --- 2. Create Time Vector ---
+    # Generate a time array based on the number of samples and sampling frequency
+    t = np.arange(num_samples) / fs
+
+    # --- 3. Calculate Center Impulse Response ---
+    # This formula is derived from the gamma distribution, representing the
+    # response of n cascaded low-pass filters.
+    center_response = (t / tau)**(n - 1) * np.exp(-t / tau) * (1 / (tau * math.factorial(n - 1)))
+    
+    # Normalize the peak of the center response to 1 for easier interpretation
+    if np.max(center_response) > 0:
+        center_response /= np.max(center_response)
+
+    # --- 4. Calculate Surround Impulse Response ---
+    # The surround is modeled as a delayed, inverted, and scaled version
+    # of the center response.
+    t_surround = t - surround_delay
+    # Ensure time is not negative for the surround calculation
+    t_surround[t_surround < 0] = 0 
+    
+    surround_response = (t_surround / tau)**(n - 1) * np.exp(-t_surround / tau) * (1 / (tau * math.factorial(n - 1)))
+    
+    # Normalize and scale by the surround gain
+    if np.max(surround_response) > 0:
+        surround_response /= np.max(surround_response)
+    surround_response *= surround_gain
+
+    # --- 5. Combine Center and Surround ---
+    # The final receptive field response is the difference between the center
+    # and the antagonistic surround.
+    combined_response = center_response - surround_response
+
+    return t, combined_response
+
+
+def generate_rgc_spatial_rf(cell_type='P', eccentricity=5.0, resolution=100, size_samples=100):
+    """
+    Generates the 2D spatial receptive field for a primate retinal ganglion cell.
+
+    This function is based on the Difference of Gaussians (DoG) model, with
+    parameters for center/surround size and gain from Croner & Kaplan (1995).
+    It uses a lookup table and interpolation to determine the center size.
+
+    Args:
+        cell_type (str): 'P' for Parvocellular or 'M' for Magnocellular.
+        eccentricity (float): The distance from the fovea in degrees of visual angle.
+                              Affects the size of the receptive field. Defaults to 5.0.
+        resolution (int): The resolution of the grid in samples (pixels) per degree
+                          of visual angle. Defaults to 100.
+        size_samples (int): The total width and height of the spatial grid in samples
+                            (pixels). Defaults to 100.
+
+    Returns:
+        tuple: A tuple containing:
+            - x_grid (numpy.ndarray): A 2D array of x-coordinates for the grid.
+            - y_grid (numpy.ndarray): A 2D array of y-coordinates for the grid.
+            - rf (numpy.ndarray): A 2D array representing the receptive field sensitivity.
+    """
+    # 1. Set constant parameters from Croner & Kaplan (1995), Table 1.
+    # Data is digitized from the table for specific eccentricity ranges,
+    # ignoring the overall summary row for the "0-40" range as requested.
+    # We use the midpoint of each specific range for interpolation.
+    p_cell_data = {
+        # Midpoints for ranges: 0-5, 5-10, 10-20, 20-30, 30-40
+        'ecc_mid': np.array([2.5, 7.5, 15, 25, 35]),
+        'rc':      np.array([0.03, 0.05, 0.07, 0.09, 0.15]), # Center radius (deg)
+        'rs':      np.array([0.18, 0.43, 0.54, 0.73, 0.65]), # Surround radius (deg)
+        # Gain ratio is calculated from median Kc and Ks values (Ks/Kc)
+        'gain_ratio': np.array([4.4/325.2, 0.7/114.7, 0.6/77.8, 0.8/57.2, 1.1/18.6])
+    }
+    m_cell_data = {
+        # Midpoints for ranges: 0-10, 10-20, 20-30
+        'ecc_mid': np.array([5, 15, 25]),
+        'rc':      np.array([0.10, 0.18, 0.23]),
+        'rs':      np.array([0.72, 1.19, 0.58]),
+        'gain_ratio': np.array([1.1/148.0, 2.0/115.0, 1.6/63.8])
+    }
+
+    if cell_type.upper() == 'P':
+        data = p_cell_data
+    elif cell_type.upper() == 'M':
+        data = m_cell_data
+    else:
+        raise ValueError("Invalid cell_type. Choose 'P' or 'M'.")
+
+    # 2. Calculate RF parameters by interpolating from the lookup table
+    # sigma_c and sigma_s are the standard deviations of the Gaussians, equivalent to rc and rs
+    sigma_c = np.interp(eccentricity, data['ecc_mid'], data['rc'])
+    sigma_s = np.interp(eccentricity, data['ecc_mid'], data['rs'])
+    surround_gain = np.interp(eccentricity, data['ecc_mid'], data['gain_ratio'])
+
+    # 3. Create the 2D spatial grid based on resolution and sample size
+    degrees = size_samples / resolution
+    half_degrees = degrees / 2
+    x = np.linspace(-half_degrees, half_degrees, size_samples)
+    y = np.linspace(-half_degrees, half_degrees, size_samples)
+    x_grid, y_grid = np.meshgrid(x, y)
+
+    # 4. Calculate the Center and Surround Gaussian profiles
+    dist_sq = x_grid**2 + y_grid**2
+    center_gauss = np.exp(-dist_sq / (2 * sigma_c**2))
+    surround_gauss = np.exp(-dist_sq / (2 * sigma_s**2))
+
+    # 5. Combine into the Difference of Gaussians (DoG) receptive field
+    rf = center_gauss - surround_gain * surround_gauss
+
+    return x_grid, y_grid, rf
