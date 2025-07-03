@@ -53,9 +53,8 @@ nexttile;
 imagesc(im);
 hold on;
 plot(x_start + pos(1,:) + roi_size/2, y_start + pos(2,:) + roi_size / 2, ...
-    'LineWidth', 2, 'Color', 'r', ...
-    'DisplayName', 'Gaze');
-legend('Location', 'best');
+    'LineWidth', 2, 'Color', 'r' ...
+    '');
 title("Original");
 axis off square;
 
