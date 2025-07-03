@@ -13,6 +13,8 @@ import cv2
 import subprocess
 import os
 from utils import generate_rgc_impulse_response, generate_rgc_spatial_rf
+import torch.nn.functional as F
+import torch
 
 def NormalizeData(data):
     return (data - np.min(data)) / (np.max(data) - np.min(data))
@@ -59,7 +61,7 @@ if __name__ == "__main__":
     generate_video_file = True  # Whether or not to save an mp4 of a sample video
     save_data = False            # Whether or not to save npy file containing all data
     plot_figures = False
-    play_video = False
+    play_video = True
 
     cell_type = "M"
     eccentricity = 1.0
@@ -149,7 +151,7 @@ if __name__ == "__main__":
             output_tmp[fi,:,:] = img_filt[eye_idx[1,fi]:eye_idx[1,fi]+NX, eye_idx[0,fi]:eye_idx[0,fi]+NX]
 
         input[i,:] = input_tmp[l_filt//2-1:-l_filt//2,:]
-        output[i,:] = convolve1d(output_tmp, ht, 0)[:NT,:]
+        output[i,:] = F.softplus(torch.tensor(convolve1d(output_tmp, ht, 0)[:NT,:])).numpy()
         
         if em_carryover:
             eye_idx = eye_res

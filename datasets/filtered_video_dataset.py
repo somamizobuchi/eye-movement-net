@@ -35,7 +35,7 @@ class FilteredVideoDataset(Dataset):
         self.length = self.data_in.shape[0]
 
     def __len__(self) -> int:
-        return self.length
+        return 10
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
         """Randomly select a video index."""

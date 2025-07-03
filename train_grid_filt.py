@@ -25,7 +25,7 @@ class TrainingConfig:
     # Model parameters
     kernel_size: int = 24
     kernel_length: int = 24
-    n_kernels: int = 128
+    n_kernels: int = 96
     fs: int = 1000  # Hz
     ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
@@ -34,7 +34,7 @@ class TrainingConfig:
     # Training parameters
     batch_size: int = 16
     total_iterations: int = 500_000
-    log_iterations: int = 1000
+    log_iterations: int = 2500
     checkpoint_iterations: int = 100_000
 
     # Loss weights
@@ -46,7 +46,8 @@ class TrainingConfig:
     #### Params for fixation videos
     sigma: float = 1e-4  # Spatial jerk energy (smoothness)
     gamma: float = 1e-5  # Regularization
-    theta: float = 1e-2  # Temporal filter regularization
+    theta: float = 1e-5  # Temporal filter regularization
+    noise: float = 1e-2  # Noise factor
     # sigma: float = 0  # Spatial jerk energy (smoothness)
     # gamma: float = 0  # Regularization
     # theta: float = 0  # Temporal filter regularization
@@ -143,6 +144,7 @@ class Trainer:
             self.config.n_kernels,
             self.config.fs,
             self.config.temporal_pad,
+            self.config.noise
         ).to(self.config.device)
 
         self.optimizer = torch.optim.Adam(self.model.parameters())
@@ -300,7 +302,7 @@ class Trainer:
         ax.plot(kernels.numpy().T)
         return fig
 
-    def train_step(self, sigma=None, gamma=None, theta=None):
+    def train_step(self, sigma=None, gamma=None, theta=None, noise=None):
         """
         Execute single training step.
 
@@ -323,13 +325,12 @@ class Trainer:
         sigma = sigma if sigma is not None else self.config.sigma
         gamma = gamma if gamma is not None else self.config.gamma
         theta = theta if theta is not None else self.config.theta
+        noise = noise if noise is not None else self.config.noise
 
         # Compute losses
         loss_mse = torch.nn.functional.mse_loss(
             self.current_reconstruction, self.current_target
         )
-        # loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
-        # loss_jerk_spatial = sigma * self.model.kernel_spatial_jerk()
         loss_spatial_variance = sigma * self.model.kernel_variance()
         loss_sreg = gamma * (
             self.model.spatial_kernels.square().sum()
@@ -375,6 +376,7 @@ class Trainer:
                 "sigma": [1e-2, 5e-2, 1e-1, 5e-1, 1e0],
                 "gamma": [1e-1, 1e0, 1e1, 1e2],
                 "theta": [1e-1, 1e0, 1e1, 1e2],
+                "noise": [1e-3]
             }
 
         # Generate all combinations of parameters
@@ -421,15 +423,18 @@ class Trainer:
                 if loss is None:
                     continue
 
+
                 # Log periodically
                 if j % self.config.log_iterations == (self.config.log_iterations - 1):
                     # Log metrics to TensorBoard
-                    for name, value in self.running_metrics.items():
-                        self.writer.add_scalar(
-                            f"Grid/{name}/combo_{i}",
-                            value / self.config.log_iterations,
-                            j,
-                        )
+                    # for name, value in self.running_metrics.items():
+                    #     self.writer.add_scalar(
+                    #         f"Grid/{name}",
+                    #         value / self.config.log_iterations,
+                    #         j,
+                    #     )
+                    loss_metrics_iter = {f"Loss/{k}": v / self.config.log_iterations for k, v in self.running_metrics.items()}
+                    self.writer.add_hparams(param_dict, loss_metrics_iter, run_name=f"run_{i}", global_step=j)
 
                     # Log to results file
                     with open(results_file, "a") as f:
@@ -542,6 +547,7 @@ def main(
         "sigma_values": "sigma",
         "gamma_values": "gamma",
         "theta_values": "theta",
+        "noise_values": "noise"
     }
 
     # Parse grid search parameters
