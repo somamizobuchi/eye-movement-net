@@ -1,4 +1,6 @@
 import numpy as np
+from typing import Tuple
+
 
 def generate_brownian_motion(D: float, fs: int, length: int) -> np.ndarray:
     """
@@ -19,15 +21,16 @@ def generate_brownian_motion(D: float, fs: int, length: int) -> np.ndarray:
     eye_trace = np.cumsum(eye_trace, axis=1)
     return eye_trace
 
+
 def generate_saccade(amplitude_deg, direction_deg, sampling_frequency_hz):
     """
     Generate a 2D saccade trajectory based on amplitude, direction, and sampling frequency.
-    
+
     Parameters:
     - amplitude_deg: float, amplitude of saccade in degrees
     - direction_deg: float, direction of saccade in degrees (0 = right, 90 = up)
     - sampling_frequency_hz: float, number of samples per second
-    
+
     Returns:
     - time: np.ndarray, time vector in seconds
     - x: np.ndarray, horizontal position over time in degrees
@@ -48,7 +51,7 @@ def generate_saccade(amplitude_deg, direction_deg, sampling_frequency_hz):
     t_norm = time / duration_sec
 
     # Generate velocity profile (bell-shaped using beta-like function)
-    beta_profile = 30 * t_norm**2 * (1 - t_norm)**2
+    beta_profile = 30 * t_norm**2 * (1 - t_norm) ** 2
     beta_profile /= np.max(beta_profile)
 
     velocity_profile = peak_velocity * beta_profile
@@ -59,3 +62,22 @@ def generate_saccade(amplitude_deg, direction_deg, sampling_frequency_hz):
     y = position_profile * np.sin(direction_rad)
 
     return time, x, y, velocity_profile
+
+
+def reconstruct_static_image(pos: np.ndarray, video: np.ndarray) -> np.ndarray:
+
+    out_width = np.max(pos[0, :]) - np.min(pos[0, :]) + video.shape[1]
+    out_height = np.max(pos[1, :]) - np.min(pos[1, :]) + video.shape[2]
+
+    reconstructed_image = np.zeros((out_height, out_width), dtype=video.dtype)
+
+    for i in range(pos.shape[1]):
+        x = int(pos[0, i] - np.min(pos[0, :]))
+        y = int(pos[1, i] - np.min(pos[1, :]))
+
+        if 0 <= x < out_width and 0 <= y < out_height:
+            reconstructed_image[
+                y : y + video.shape[1], x : x + video.shape[2]
+            ] += video[:, :, i]
+
+    return reconstructed_image

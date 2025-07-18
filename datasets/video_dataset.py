@@ -30,7 +30,7 @@ class VideoDataset(Dataset):
     def __len__(self) -> int:
         return self.length
 
-    def __getitem__(self, index) -> Tuple[torch.Tensor]:
+    def __getitem__(self, index) -> torch.Tensor:
         """Randomly select a video index."""
         fi = torch.randint(self.data.shape[0], (1,))
 
