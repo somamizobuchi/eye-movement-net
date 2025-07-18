@@ -44,10 +44,11 @@ end
 im_mask = im_mask ./ max(im_mask(:));
 im_target = im .* im_mask;
 
+% Show retinal input and output
+implay(cat(2, rescale(retinal_input(:,:,length(filter):end)), rescale(retinal_output)));
+
 figure;
 tl = tiledlayout(1, 3, 'TileSpacing', 'None', 'Padding', 'tight');
-
-implay(cat(2, rescale(retinal_input(:,:,length(filter):end)), rescale(retinal_output)));
 
 nexttile;
 imagesc(im);
