@@ -13,6 +13,7 @@ import os
 import argparse
 import json
 from pathlib import Path
+import tkinter.filedialog
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -21,7 +22,6 @@ from model import Encoder # Assuming your model.py defines this
 from utils import rescale # Assuming your utils.py defines this
 import diplib as dip
 from tqdm import tqdm
-
 
 def radial_profile(data, center=None):
     """
@@ -246,7 +246,7 @@ def plot_radial_spectra_overlay(model, save_path=None, title=None, max_kernels=N
     plt.xscale("log")
 
     plt.xlim(1, kernel_size // 2 if kernel_size // 2 > 1 else max(2,max_freq_len))
-    plt.ylim(-60, 0) 
+    plt.ylim(-80, -20) 
     plt.grid(True, alpha=0.4, which="both", linestyle='--') 
     if n_kernels > 0 and n_kernels <= 20 : 
         plt.legend(loc='upper right', fontsize='small', bbox_to_anchor=(1.15, 1))
@@ -380,7 +380,7 @@ def plot_temporal_spectra_overlay(model, fs, save_path=None, title=None, max_ker
         max_power_val = max(max_power_val, np.max(db_power))
 
 
-        plt.plot(frequencies, db_power, color=colors[i], label=f"Kernel {i+1}", alpha=0.8)
+        plt.plot(frequencies, power_spectrum, color=colors[i], label=f"Kernel {i+1}", alpha=0.8)
         plotted_anything = True
 
     if not plotted_anything:
@@ -397,8 +397,9 @@ def plot_temporal_spectra_overlay(model, fs, save_path=None, title=None, max_ker
 
     plt.tight_layout(rect=[0, 0, 0.85, 1]) 
     # plt.xlim(0, fs / 2) 
-    plt.ylim(-10, max(0, max_power_val + 1) if max_power_val > -np.inf else 10 ) # Dynamic upper y-limit, ensure non-negative range
-    plt.xscale("log")
+    # plt.ylim(-10, max(0, max_power_val + 1) if max_power_val > -np.inf else 10 ) # Dynamic upper y-limit, ensure non-negative range
+    # plt.ylim(-75, 0);
+    # plt.xscale("log")
 
 
     if save_path:
@@ -535,22 +536,22 @@ def analyze_grid_search(grid_dir, max_kernels=10, device="cpu"):
             # )
 
             # # 2. Radial spectra overlay plot (original)
-            # radial_overlay_save_path = plots_dir / f"{safe_run_id}_radial_spectra_overlay.png"
-            # plot_radial_spectra_overlay(
-            #     model,
-            #     save_path=radial_overlay_save_path,
-            #     title=f"Radial Spectra Overlay - {title_base}",
-            #     max_kernels=max_kernels,
-            # )
+            radial_overlay_save_path = plots_dir / f"{safe_run_id}_radial_spectra_overlay.png"
+            plot_radial_spectra_overlay(
+                model,
+                save_path=radial_overlay_save_path,
+                title=f"Radial Spectra Overlay - {title_base}",
+                max_kernels=max_kernels,
+            )
 
-            # # 3. NEW: Spatial and Temporal Kernels Side-by-Side
-            # st_side_by_side_save_path = plots_dir / f"{safe_run_id}_spatial_temporal_sidebyside.png"
-            # plot_spatial_temporal_kernels_side_by_side(
-            #     model,
-            #     save_path=st_side_by_side_save_path,
-            #     title=f"Spatial & Temporal Kernels - {title_base}",
-            #     max_kernels=max_kernels
-            # )
+            # 3. NEW: Spatial and Temporal Kernels Side-by-Side
+            st_side_by_side_save_path = plots_dir / f"{safe_run_id}_spatial_temporal_sidebyside.png"
+            plot_spatial_temporal_kernels_side_by_side(
+                model,
+                save_path=st_side_by_side_save_path,
+                title=f"Spatial & Temporal Kernels - {title_base}",
+                max_kernels=30
+            )
 
             # 4. NEW: Temporal Spectra Overlay
             temporal_spectra_overlay_save_path = plots_dir / f"{safe_run_id}_temporal_spectra_overlay.png"

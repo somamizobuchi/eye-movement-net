@@ -12,6 +12,7 @@ class Encoder(nn.Module):
         n_kernels: int = 32,
         f_samp_hz: float = 240,
         temporal_pad: Tuple[int, int] = (0, 0),
+        noise: float = 1e-2,
     ):
         super().__init__()
         self.kernel_size = spatial_kernel_size
@@ -19,7 +20,9 @@ class Encoder(nn.Module):
         self.n_kernels = n_kernels
         self.fs = f_samp_hz
         self.temporal_pad = temporal_pad
+        self.noise = noise
 
+        # Initialize parameters
         self.spatial_kernels = torch.nn.Parameter(
             torch.full([self.n_kernels, self.kernel_size**2], 0.0)
         )
@@ -43,7 +46,7 @@ class Encoder(nn.Module):
         # Spatial convolution (i.e. dot product with kernels)
         # (B, T, X*Y) @ (X*Y, K) = (T, K)
         x = input.reshape(*input.shape[0:2], -1) @ self.spatial_kernels.T.unsqueeze(0)
-        x = x + 0.1 * torch.randn_like(x)
+        x = x + self.noise * torch.randn_like(x)
 
         # Temporal convolution (kernel-wise)
         x = F.conv1d(
@@ -56,8 +59,8 @@ class Encoder(nn.Module):
 
         # Apply non-linearity
         x = F.softplus(x)
-        # x = x + 0.1 * torch.randn_like(x)
-        x = x + torch.poisson(x)
+        x = x + self.noise * torch.randn_like(x)
+        # x = x + torch.poisson(x)
 
         encoder_output = x.clone()
 

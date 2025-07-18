@@ -1,0 +1,98 @@
+im = imread("cameraman.tif");
+im = double(im) / 255;
+im = im - mean(im);
+
+%%
+
+roi_size = 128;
+n_samples = 256;
+
+pos = randn([2, n_samples]);
+pos = round([[0;0], cumsum(pos, 2)]);
+pos = pos - min(pos, [], 2);
+
+pos_span = peak2peak(pos, 2);
+pos_span = pos_span + 1;
+
+x_start = randi(width(im) - roi_size - pos_span(1));
+y_start = randi(height(im) - roi_size - pos_span(2));
+
+im_mask = zeros(size(im));
+
+retinal_input = zeros([roi_size, roi_size, n_samples]);
+
+% generate mask + retinal input
+for i = 1:n_samples
+    y_idcs = (1:roi_size) + y_start + pos(2, i);
+    x_idcs = (1:roi_size) + x_start + pos(1, i);
+    im_mask(y_idcs,x_idcs) = im_mask(y_idcs,x_idcs) + 1;
+    retinal_input(:,:,i) = im(y_idcs, x_idcs);
+end
+
+% filter
+filter = [0.5 1 0.5 0 -0.5 -1 -0.5] ./ n_samples;
+retinal_output = convn(retinal_input, reshape(filter, 1, 1, []), "valid");
+
+% reconstruct
+im_recons = zeros(size(im));
+for i = 1:size(retinal_output, 3)
+    y_idcs = (1:roi_size) + y_start + pos(2, i + length(filter) - 1);
+    x_idcs = (1:roi_size) + x_start + pos(1, i + length(filter) - 1);
+    im_recons(y_idcs, x_idcs) = im_recons(y_idcs, x_idcs) + retinal_output(:,:,i);
+end
+
+im_mask = im_mask ./ max(im_mask(:));
+im_target = im .* im_mask;
+
+% Show retinal input and output
+implay(cat(2, rescale(retinal_input(:,:,length(filter):end)), rescale(retinal_output)));
+
+figure;
+tl = tiledlayout(1, 3, 'TileSpacing', 'None', 'Padding', 'tight');
+
+nexttile;
+imagesc(im);
+hold on;
+plot(x_start + pos(1,:) + roi_size/2, y_start + pos(2,:) + roi_size / 2, ...
+    'LineWidth', 2, 'Color', 'r', ...
+    'DisplayName', 'Gaze');
+legend('Location', 'best');
+title("Original");
+axis off square;
+
+nexttile;
+imagesc(im_target);
+title("Target");
+axis off square;
+
+nexttile;
+imagesc(im_recons);
+title("Reconstruction");
+axis off square;
+%% Power
+
+[P_im, k] = radial_power(im, 20);
+P_target = radial_power(im_target, 20);
+P_recons = radial_power(im_recons, 20);
+figure;
+hold on;
+plot(k, P_im, 'DisplayName', 'Original');
+plot(k, P_target, 'DisplayName', 'Target');
+plot(k, P_recons, 'DisplayName', 'Reconstruction');
+xlabel("Spatial frequency");
+ylabel("Power");
+
+set(gca, 'XScale', 'log', 'YScale', 'log');
+
+legend();
+%%
+
+function [Pr, centers, edges] =  radial_power(im, n_bins)
+    P = fftshift(abs(fft2(im)).^2) / numel(im);
+    n = size(im, 1);
+    k = -n/2+1:n/2;
+    kr = sqrt(k.^2 + k'.^2);
+    [ind, edges] = discretize(kr, n_bins);
+    Pr = accumarray(ind(:), P(:), [n_bins, 1], @mean);
+    centers = movmean(edges, 2, 'omitmissing','Endpoints', 'discard');
+end
