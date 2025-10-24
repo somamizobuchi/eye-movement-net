@@ -9,8 +9,9 @@ class TemporalVelocityDecoder(nn.Module):
     Uses 1D convolutions over the temporal dimension to incorporate context.
     """
 
-    def __init__(self, in_channels, hidden_channels=128, out_channels=2):
+    def __init__(self, in_channels, hidden_channels=128, out_channels=2, max_velocity=10.0):
         super().__init__()
+        self.max_velocity = max_velocity
         self.temporal_net = nn.Sequential(
             nn.Conv1d(in_channels, hidden_channels, kernel_size=3, padding=1),
             nn.BatchNorm1d(hidden_channels),
@@ -26,9 +27,10 @@ class TemporalVelocityDecoder(nn.Module):
         Args:
             features: (B, J, T_out)
         Returns:
-            velocities: (B, T_out, 2)
+            velocities: (B, T_out, 2) - bounded to [-max_velocity, max_velocity]
         """
         x = self.temporal_net(features)  # (B, hidden, T_out)
         v = self.head(x)  # (B, 2, T_out)
+        v = torch.tanh(v) * self.max_velocity  # Bound to [-max_velocity, max_velocity]
         v = v.permute(0, 2, 1)  # → (B, T_out, 2)
         return v

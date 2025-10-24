@@ -147,16 +147,21 @@ class FullModelTrainer:
         mask_imgs = mask.unsqueeze(1).float()  # (batch_size, 1, Hc, Wc)
 
         # Compute loss with mask
-        squared_error = (reconstructed_canvases - target_imgs * mask_imgs) ** 2
+        squared_error = (reconstructed_canvases - target_imgs) ** 2
+        squared_error = (
+            squared_error * mask_imgs
+            + 5.0 * squared_error * (~mask.unsqueeze(1)).float()
+        )
+        # squared_error = squared_error
         reconstruction_loss = squared_error.sum() / (mask_imgs.sum() + 1e-8)
         reconstruction_loss = self.reconstruction_loss_weight * reconstruction_loss
 
         # Compute L2 regularization loss on spatial kernels
-        spatial_l2 = torch.mean(self.model.encoder.spatial_kernels**2)
+        spatial_l2 = self.model.encoder.spatial_kernels.square().mean()
         spatial_l2_loss = self.l2_spatial_weight * spatial_l2
 
         # Compute L2 on the area under temporal kernels (force zero-mean)
-        temporal_l2 = self.model.encoder.temporal_kernels.sum(dim=1).square().mean()
+        temporal_l2 = self.model.encoder.temporal_kernels.square().mean()
         temporal_l2_loss = self.l2_temporal_weight * temporal_l2
 
         # Compute temporal smoothness loss on velocity decoder
@@ -213,15 +218,21 @@ class FullModelTrainer:
 
             # Extract ground truth positions from eye trace
             # eye_trace shape: (batch_size, 2, t)
-            # We need positions from time T onwards
-            gt_positions = eye_trace[0, :, self.model.T :].T  # (num_positions, 2)
+            # We need positions starting at T-1 (same as initial_position) through the output timesteps
+            # This ensures gt_positions[0] matches the initial position
+            gt_positions = eye_trace[
+                0, :, self.model.T - 1 : self.model.T - 1 + t_out
+            ].T  # (t_out, 2)
+
+            # Verify first ground truth position matches initial position
+            # (They should be the same since both are at time T-1)
+            assert torch.allclose(
+                gt_positions[0], initial_pos, atol=1e-5
+            ), f"First GT position {gt_positions[0]} doesn't match initial position {initial_pos}"
 
             # Ensure gt_positions matches the length of predicted positions
-            if gt_positions.shape[0] > t_out:
-                # Truncate to match
-                gt_positions = gt_positions[:t_out]
-            elif gt_positions.shape[0] < t_out:
-                # Pad with last position if needed
+            if gt_positions.shape[0] < t_out:
+                # Pad with last position if needed (edge case)
                 last_pos = (
                     gt_positions[-1:]
                     if gt_positions.shape[0] > 0

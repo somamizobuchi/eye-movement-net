@@ -48,7 +48,7 @@ def bilinear_splat(I, offsets, canvas_size):
     y_local, x_local = torch.meshgrid(
         torch.arange(H, device=device, dtype=torch.float32),
         torch.arange(W, device=device, dtype=torch.float32),
-        indexing="ij"
+        indexing="ij",
     )
 
     for i in range(N):
@@ -69,10 +69,7 @@ def bilinear_splat(I, offsets, canvas_size):
         dy = y_global - y0.float()
 
         # Valid region mask (all 4 corners must be in bounds)
-        valid = (
-            (x0 >= 0) & (x1 < Wc) &
-            (y0 >= 0) & (y1 < Hc)
-        )
+        valid = (x0 >= 0) & (x1 < Wc) & (y0 >= 0) & (y1 < Hc)
 
         # Get the image values (broadcast to match spatial dimensions)
         I_val = I[i, 0]  # Shape: (H, W)
@@ -80,9 +77,9 @@ def bilinear_splat(I, offsets, canvas_size):
         # Splat to all 4 neighbors with bilinear weights
         corners = [
             (y0, x0, (1 - dx) * (1 - dy)),  # Top-left
-            (y0, x1, dx * (1 - dy)),         # Top-right
-            (y1, x0, (1 - dx) * dy),         # Bottom-left
-            (y1, x1, dx * dy),               # Bottom-right
+            (y0, x1, dx * (1 - dy)),  # Top-right
+            (y1, x0, (1 - dx) * dy),  # Bottom-left
+            (y1, x1, dx * dy),  # Bottom-right
         ]
 
         for y_t, x_t, weight in corners:
@@ -134,7 +131,7 @@ def bilinear_splat_batch(I, offsets, canvas_size):
     y_local, x_local = torch.meshgrid(
         torch.arange(H, device=device, dtype=torch.float32),
         torch.arange(W, device=device, dtype=torch.float32),
-        indexing="ij"
+        indexing="ij",
     )
 
     # Broadcast to (N, H, W)
@@ -151,10 +148,7 @@ def bilinear_splat_batch(I, offsets, canvas_size):
     dy = y_global - y0.float()
 
     # Valid mask
-    valid = (
-        (x0 >= 0) & (x1 < Wc) &
-        (y0 >= 0) & (y1 < Hc)
-    )
+    valid = (x0 >= 0) & (x1 < Wc) & (y0 >= 0) & (y1 < Hc)
 
     I_flat = I[:, 0, :, :]  # (N, H, W)
 
@@ -181,17 +175,13 @@ def bilinear_splat_batch(I, offsets, canvas_size):
 
         if mask.any():
             G[0, 0].index_put_(
-                (y_flat[mask], x_flat[mask]),
-                contrib_flat[mask],
-                accumulate=True
+                (y_flat[mask], x_flat[mask]), contrib_flat[mask], accumulate=True
             )
             Wsum[0, 0].index_put_(
-                (y_flat[mask], x_flat[mask]),
-                w_flat[mask],
-                accumulate=True
+                (y_flat[mask], x_flat[mask]), w_flat[mask], accumulate=True
             )
 
-    G = G / (Wsum + 1e-8)
+    # G = G / (Wsum + 1e-8)
     return G
 
 
@@ -229,7 +219,7 @@ def bilinear_splat_training_batch(I, offsets, canvas_size):
     y_local, x_local = torch.meshgrid(
         torch.arange(H, device=device, dtype=torch.float32),
         torch.arange(W, device=device, dtype=torch.float32),
-        indexing="ij"
+        indexing="ij",
     )
 
     # Broadcast to (B, T, H, W)
@@ -248,48 +238,52 @@ def bilinear_splat_training_batch(I, offsets, canvas_size):
     dy = y_global - y0.float()
 
     # Valid region mask (all 4 corners must be in bounds)
-    valid = (
-        (x0 >= 0) & (x1 < Wc) &
-        (y0 >= 0) & (y1 < Hc)
-    )
+    valid = (x0 >= 0) & (x1 < Wc) & (y0 >= 0) & (y1 < Hc)
 
     # Define the 4 corners with their weights
     corners = [
         (y0, x0, (1 - dx) * (1 - dy)),  # Top-left
-        (y0, x1, dx * (1 - dy)),         # Top-right
-        (y1, x0, (1 - dx) * dy),         # Bottom-left
-        (y1, x1, dx * dy),               # Bottom-right
+        (y0, x1, dx * (1 - dy)),  # Top-right
+        (y1, x0, (1 - dx) * dy),  # Bottom-left
+        (y1, x1, dx * dy),  # Bottom-right
     ]
 
-    # Process each batch item
-    for b in range(B):
-        for y_t, x_t, weight in corners:
-            # Extract data for this batch item: (T, H, W)
-            w_val = weight[b] * valid[b]  # (T, H, W)
-            contribution = I[b] * w_val   # (T, H, W)
+    # Create flattened canvas for all batch items
+    # Instead of processing each batch separately, encode batch index in linear indices
+    G_flat = torch.zeros(B * Hc * Wc, device=device, dtype=dtype)
+    Wsum_flat = torch.zeros(B * Hc * Wc, device=device, dtype=dtype)
 
-            # Flatten for scatter
-            y_flat = y_t[b].flatten()     # (T*H*W,)
-            x_flat = x_t[b].flatten()     # (T*H*W,)
-            contrib_flat = contribution.flatten()  # (T*H*W,)
-            w_flat = w_val.flatten()      # (T*H*W,)
+    # Create batch offset tensor: (B, 1, 1, 1) broadcasts to (B, T, H, W)
+    batch_offset = torch.arange(B, device=device).view(B, 1, 1, 1) * (Hc * Wc)
 
-            # Only accumulate valid positions
-            mask = (y_flat >= 0) & (y_flat < Hc) & (x_flat >= 0) & (x_flat < Wc)
+    # Process all corners with vectorized scatter
+    for y_t, x_t, weight in corners:
+        # Compute weighted values for all batches: (B, T, H, W)
+        w_val = weight * valid  # (B, T, H, W)
+        contribution = I * w_val  # (B, T, H, W)
 
-            if mask.any():
-                G_batch[b, 0].index_put_(
-                    (y_flat[mask], x_flat[mask]),
-                    contrib_flat[mask],
-                    accumulate=True
-                )
-                Wsum_batch[b, 0].index_put_(
-                    (y_flat[mask], x_flat[mask]),
-                    w_flat[mask],
-                    accumulate=True
-                )
+        # Compute linear indices that encode batch position
+        # linear_idx = b * (Hc * Wc) + y * Wc + x
+        linear_idx = batch_offset + y_t * Wc + x_t  # (B, T, H, W)
+
+        # Flatten all dimensions: (B*T*H*W,)
+        idx_flat = linear_idx.flatten()
+        contrib_flat = contribution.flatten()
+        w_flat = w_val.flatten()
+
+        # Filter valid indices (in bounds and passes valid mask)
+        valid_mask = (idx_flat >= 0) & (idx_flat < B * Hc * Wc)
+
+        if valid_mask.any():
+            # Single scatter operation for all batch items
+            G_flat.scatter_add_(0, idx_flat[valid_mask], contrib_flat[valid_mask])
+            Wsum_flat.scatter_add_(0, idx_flat[valid_mask], w_flat[valid_mask])
+
+    # Reshape back to batch format: (B, Hc, Wc) -> (B, 1, Hc, Wc)
+    G_batch = G_flat.view(B, Hc, Wc).unsqueeze(1)
+    Wsum_batch = Wsum_flat.view(B, Hc, Wc).unsqueeze(1)
 
     # Normalize by accumulated weights
-    G_batch = G_batch / (Wsum_batch + 1e-8)
+    # G_batch = G_batch / (Wsum_batch + 1e-8)
 
     return G_batch

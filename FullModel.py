@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from encoder import Encoder
 from eye_trace_decoder import TemporalVelocityDecoder
 from recon_decoder import ReconstructionDecoder
@@ -30,7 +29,7 @@ class FullModel(nn.Module):
         n_channels: int,
         decoder_size: int,
         noise_std: float = 0.05,
-        max_velocity: float = 50.0,
+        max_velocity: float = 10.0,
     ):
         super(FullModel, self).__init__()
 
@@ -40,7 +39,7 @@ class FullModel(nn.Module):
         self.K = decoder_size
         self.max_velocity = max_velocity
 
-        # Modular encoder for (2+1)D convolution
+        # Modular encoder for (2+1)D convolution (includes BN and activation)
         self.encoder = Encoder(
             kernel_size=kernel_size,
             kernel_length=kernel_length,
@@ -49,14 +48,12 @@ class FullModel(nn.Module):
             noise_std=noise_std,
         )
 
-        # Batch normalization for temporal features
-        self.bn_temporal = nn.BatchNorm1d(n_channels)
-
         # Velocity decoder - predicts eye movements
         self.velocity_decoder = TemporalVelocityDecoder(
             in_channels=n_channels,
             hidden_channels=decoder_size,
             out_channels=2,
+            max_velocity=max_velocity,
         )
 
         # Reconstruction decoder - reconstructs frames
@@ -81,29 +78,16 @@ class FullModel(nn.Module):
                     - eye_velocities: (batch_size, t-T+1, 2)
                     - reconstructed_frames: (batch_size, t-T+1, N, N)
         """
-        # Apply (2+1)D convolution encoding
-        # temporal_features: (batch_size, J, t-T+1)
-        temporal_features = self.encoder(x)
-
-        # Apply batch normalization and activation
-        batch_size, n_channels, t_out = temporal_features.shape
-
-        # Reshape for batch norm: (batch_size * t_out, J)
-        temporal_flat = temporal_features.permute(0, 2, 1).reshape(-1, n_channels)
-        temporal_normalized = self.bn_temporal(temporal_flat)
-        temporal_normalized = F.relu(temporal_normalized)
-
-        # Reshape back: (batch_size, J, t_out)
-        features_seq = temporal_normalized.view(batch_size, t_out, n_channels).permute(
-            0, 2, 1
-        )
+        # Apply (2+1)D convolution encoding (includes BN and activation)
+        # features: (batch_size, J, t-T+1)
+        features = self.encoder(x)
 
         # Velocity decoding
-        eye_velocities = self.velocity_decoder(features_seq)  # (batch_size, t_out, 2)
+        eye_velocities = self.velocity_decoder(features)  # (batch_size, t_out, 2)
 
-        reconstructed_frames = self.recon_decoder(
-            features_seq
-        )  # (batch_size, t_out, N, N)
+        # Reconstruction decoding
+        reconstructed_frames = self.recon_decoder(features)  # (batch_size, t_out, N, N)
+
         return eye_velocities, reconstructed_frames
 
     def get_temporal_kernels(self) -> torch.Tensor:

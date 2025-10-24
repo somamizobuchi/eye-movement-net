@@ -11,7 +11,9 @@ class Encoder(nn.Module):
     1. Input: video of shape (batch_size, t, n, n)
     2. Spatial convolution: dot product with J kernels of size (nxn)
     3. Temporal convolution: 1D convolution with J kernels of length T
-    4. Output: spatiotemporal features (batch_size, J, t-T+1)
+    4. Batch normalization
+    5. Softplus activation
+    6. Output: spatiotemporal features (batch_size, J, t-T+1)
 
     Args:
         kernel_size (int): Spatial dimension of input video (nxn frames)
@@ -49,6 +51,9 @@ class Encoder(nn.Module):
         )
         nn.init.xavier_normal_(self.temporal_kernels)
 
+        # Batch normalization for temporal features
+        self.bn_temporal = nn.BatchNorm1d(n_channels)
+
     def forward(self, x):
         """
         Forward pass through the encoder.
@@ -85,7 +90,12 @@ class Encoder(nn.Module):
             groups=self.J,
         )
 
-        return temporal_features
+        # Apply batch normalization then activation (standard order)
+        # BN expects (batch_size, channels, ...), which matches (batch_size, J, t-T+1)
+        normalized_features = self.bn_temporal(temporal_features)
+        features = F.softplus(normalized_features)
+
+        return features
 
     def get_temporal_kernels(self) -> torch.Tensor:
         """

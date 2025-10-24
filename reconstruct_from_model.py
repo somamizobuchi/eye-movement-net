@@ -13,6 +13,9 @@ def integrate_velocities(velocities, initial_position, dt=1.0):
     """
     Integrate velocities to get absolute positions using cumulative sum.
 
+    The first position will be exactly the initial_position (no velocity applied yet).
+    Subsequent positions integrate velocities from there.
+
     Args:
         velocities: Tensor (T, 2) — velocities (dx/dt, dy/dt) at each timestep
         initial_position: Tensor (2,) — starting position (x0, y0)
@@ -20,12 +23,18 @@ def integrate_velocities(velocities, initial_position, dt=1.0):
 
     Returns:
         positions: Tensor (T, 2) — absolute positions (x, y) at each timestep
+            positions[0] = initial_position
+            positions[t] = initial_position + sum(velocities[0:t] * dt)
     """
     # Multiply velocities by dt to get displacements
     displacements = velocities * dt  # (T, 2)
 
     # Cumulative sum to get relative positions
-    relative_positions = torch.cumsum(displacements, dim=0)  # (T, 2)
+    # Use cumsum with exclusive mode: first element is 0, then cumulative
+    relative_positions = torch.cat([
+        torch.zeros_like(displacements[:1]),  # First position: no displacement
+        torch.cumsum(displacements[:-1], dim=0)  # Subsequent: cumulative sum
+    ], dim=0)  # (T, 2)
 
     # Add initial position to get absolute positions
     positions = initial_position.unsqueeze(0) + relative_positions  # (T, 2)
@@ -37,6 +46,9 @@ def integrate_velocities_batch(velocities, initial_positions, dt=1.0):
     """
     Integrate velocities for entire batch (vectorized version).
 
+    The first position will be exactly the initial_position (no velocity applied yet).
+    Subsequent positions integrate velocities from there.
+
     Args:
         velocities: Tensor (B, T, 2) — velocities for batch
         initial_positions: Tensor (B, 2) — starting positions for batch
@@ -44,12 +56,18 @@ def integrate_velocities_batch(velocities, initial_positions, dt=1.0):
 
     Returns:
         positions: Tensor (B, T, 2) — absolute positions at each timestep for batch
+            positions[:, 0, :] = initial_positions
+            positions[:, t, :] = initial_positions + sum(velocities[:, 0:t, :] * dt)
     """
     # Multiply velocities by dt to get displacements
     displacements = velocities * dt  # (B, T, 2)
 
-    # Cumulative sum along time dimension to get relative positions
-    relative_positions = torch.cumsum(displacements, dim=1)  # (B, T, 2)
+    # Cumulative sum along time dimension with exclusive mode
+    # First position: no displacement, then cumulative sum
+    relative_positions = torch.cat([
+        torch.zeros_like(displacements[:, :1, :]),  # (B, 1, 2) - first position: no displacement
+        torch.cumsum(displacements[:, :-1, :], dim=1)  # (B, T-1, 2) - cumulative sum
+    ], dim=1)  # (B, T, 2)
 
     # Add initial position to get absolute positions
     positions = initial_positions.unsqueeze(1) + relative_positions  # (B, T, 2)

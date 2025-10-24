@@ -16,13 +16,13 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset parameters
-    img_size = 64
-    roi_size = 24  # ROI size matching kernel size
-    drift_samples = 32
+    img_size = 48
+    roi_size = 20  # ROI size matching kernel size
+    drift_samples = 16
 
     # Model parameters
     kernel_size = roi_size  # 32x32 spatial kernels
-    kernel_length = 24  # Temporal kernel length
+    kernel_length = 20  # Temporal kernel length
     kernel_delay = 1  # Temporal kernel delay
     n_channels = 64  # Number of spatiotemporal channels
     decoder_size = 64  # Intermediate decoder size
@@ -32,12 +32,12 @@ def main():
     # Training parameters
     batch_size = 8
     learning_rate = 1e-3
-    n_iterations = 10000
-    l2_spatial_weight = 1e-3
-    l2_temporal_weight = 1e-3
+    n_iterations = 100_000
+    l2_spatial_weight = 1e-1
+    l2_temporal_weight = 1e-2
     temporal_smoothness_weight = 1e-3
     kernel_variance_weight = 1e-3
-    reconstruction_loss_weight = 1e3
+    reconstruction_loss_weight = 1e2
 
     # Create dataset
     print("Creating dataset...")
@@ -54,7 +54,7 @@ def main():
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=8,
     )
 
     # Create model
@@ -65,8 +65,8 @@ def main():
         kernel_delay=kernel_delay,
         n_channels=n_channels,
         decoder_size=decoder_size,
-        noise_std=0.05,
-        max_velocity=50.0,
+        noise_std=0.00,
+        max_velocity=5.0,
     )
 
     print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
@@ -80,8 +80,8 @@ def main():
         learning_rate=learning_rate,
         device=device,
         log_dir=f"runs/{start_time}/logs",
-        log_every=100,
-        save_every=10000,
+        log_every=250,
+        save_every=100_000,
         checkpoint_dir=f"runs/{start_time}/checkpoints",
         l2_spatial_weight=l2_spatial_weight,
         l2_temporal_weight=l2_temporal_weight,
