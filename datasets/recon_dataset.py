@@ -1,4 +1,5 @@
 from datasets import Dataset, np, Tuple, torch
+from tqdm import tqdm
 
 
 class ReconDataset(Dataset):
@@ -15,6 +16,8 @@ class ReconDataset(Dataset):
         diffusion_coefficient: float = 20 / 3600,
         sampling_frequency: int = 360,
         pixels_per_degree: int = 240,
+        saccade: bool = False,
+        average: bool = False,
     ):
         """Initialize the dataset with parameters."""
         self.img_size = img_size
@@ -24,39 +27,73 @@ class ReconDataset(Dataset):
         self.diffusion_coefficient = diffusion_coefficient
         self.sampling_frequency = sampling_frequency
         self.pixels_per_degree = pixels_per_degree
+        self.saccade = saccade
+        self.average = average
+
+        imgs = []
+        for i in tqdm(range(500), desc="Generating images"):
+            imgs.append(self.pink_noise_gray_image(img_size))
+        self.imgs = np.stack(imgs, axis=0).astype(np.float32)
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
         return 1_000_000
 
-    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray]:
+    def __getitem__(
+        self, index
+    ) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray, np.ndarray, int]:
         """Generate a sample consisting of a video frame and eye trace."""
         # Generate pink noise gray image
-        img = self.pink_noise_gray_image(self.img_size)
+        img = self.imgs[np.random.randint(0, self.imgs.shape[0])]
 
         # Generate eye trace
-        eye_trace = self.generate_eye_trace()
+        eye_trace, sacc_end_idx = self.generate_eye_trace()
 
         # Generate video frames and target image based on the eye trace
         video_frames = np.zeros(
             (self.total_samples, self.roi_size, self.roi_size), dtype=np.float32
         )
-        target = np.zeros((self.img_size, self.img_size), dtype=np.float32)
+
+        if self.average:
+            w = np.zeros((self.img_size, self.img_size), dtype=np.float32)
+
+        mask = np.full((self.img_size, self.img_size), False)
         for i in range(self.total_samples):
             x, y = eye_trace[:, i]
             video_frames[i] = img[y : y + self.roi_size, x : x + self.roi_size]
-            if i >= self.pad_start:
-                target[y : y + self.roi_size, x : x + self.roi_size] += 1.0 / (
-                    self.total_samples - self.pad_start
-                )
+            if i >= sacc_end_idx and i >= self.pad_start:
+                if self.average:
+                    w[y : y + self.roi_size, x : x + self.roi_size] += video_frames[i]
+                mask[y : y + self.roi_size, x : x + self.roi_size] = True
 
-        target *= img  # Scale target by the original image
-        return (torch.from_numpy(video_frames), torch.from_numpy(target), eye_trace)
+        if self.average:
+            img = w / (self.total_samples - self.pad_start)
 
-    def generate_eye_trace(self) -> np.ndarray:
+        return (
+            torch.from_numpy(video_frames),
+            torch.from_numpy(img),
+            eye_trace,
+            mask,
+            sacc_end_idx,
+        )
+
+    def generate_eye_trace(self) -> Tuple[np.ndarray, int]:
         start_point = np.random.randint(
             0, self.img_size - self.roi_size, size=(2, 1)
         )  # Random starting point
+
+        if not self.saccade:
+            while True:
+                d = self.generate_brownian_motion(
+                    self.diffusion_coefficient,
+                    self.sampling_frequency,
+                    self.total_samples,
+                )
+                d = np.round(d * self.pixels_per_degree).astype(int) + start_point
+                if np.all(d >= 0) and np.all(d < self.img_size - self.roi_size):
+                    break
+            return d, 0
+
         while True:
             d1 = self.generate_brownian_motion(
                 self.diffusion_coefficient, self.sampling_frequency, self.pad_start
@@ -81,6 +118,8 @@ class ReconDataset(Dataset):
             if np.all(s >= 0) and np.all(s < self.img_size - self.roi_size):
                 break
 
+        sacc_end_idx = d1.shape[1] + s.shape[1] - 1
+
         while True:
             d2 = self.generate_brownian_motion(
                 self.diffusion_coefficient,
@@ -92,7 +131,7 @@ class ReconDataset(Dataset):
                 break
 
         # Combine drift and saccade
-        return np.concatenate((d1, s, d2), axis=1)
+        return (np.concatenate((d1, s, d2), axis=1), sacc_end_idx)
 
     @staticmethod
     def generate_brownian_motion(D: float, fs: int, length: int) -> np.ndarray:
@@ -158,13 +197,15 @@ class ReconDataset(Dataset):
 
     @staticmethod
     def reconstruct_static_image(
-        pos: np.ndarray, video: torch.Tensor, img_size: int
+        pos: torch.Tensor, video: torch.Tensor, img_size: int
     ) -> torch.Tensor:
         if pos.shape[1] != video.shape[0]:
             raise ValueError("Position array length must match video frame count.")
 
         roi_size = video.shape[1]
-        img = torch.zeros([img_size, img_size], dtype=torch.float32)
+        img = torch.zeros(
+            [img_size, img_size], dtype=torch.float32, device=video.device
+        )
         for i in range(pos.shape[1]):
             img[
                 pos[1, i] : pos[1, i] + roi_size, pos[0, i] : pos[0, i] + roi_size

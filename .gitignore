@@ -3,6 +3,7 @@ __pycache__
 data/
 checkpoints/
 run*/
+experiments/
 .vscode/
 .ropeproject/
 logs/
@@ -10,3 +11,5 @@ logs/
 grid_search/
 .venv
 figures/
+.claude/
+.mypy_cache/

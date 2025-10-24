@@ -3,14 +3,13 @@ im = double(im) / 255;
 im = im - mean(im);
 
 %%
-
 roi_size = 128;
 n_samples = 256;
 
 pos = randn([2, n_samples]);
 pos = round([[0;0], cumsum(pos, 2)]);
 pos = pos - min(pos, [], 2);
-
+% x
 pos_span = peak2peak(pos, 2);
 pos_span = pos_span + 1;
 
@@ -30,7 +29,7 @@ for i = 1:n_samples
 end
 
 % filter
-filter = [0.5 1 0.5 0 -0.5 -1 -0.5] ./ n_samples;
+filter = [1 -1] ./ n_samples;
 retinal_output = convn(retinal_input, reshape(filter, 1, 1, []), "valid");
 
 % reconstruct
@@ -46,7 +45,7 @@ im_target = im .* im_mask;
 
 % Show retinal input and output
 implay(cat(2, rescale(retinal_input(:,:,length(filter):end)), rescale(retinal_output)));
-
+%%
 figure;
 tl = tiledlayout(1, 3, 'TileSpacing', 'None', 'Padding', 'tight');
 

@@ -29,7 +29,7 @@ class TrainingConfig:
     fs: int = 1000  # Hz
     ppd: float = 180.0  # pixels per degree
     drift_samples: int = 64
-    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 4))
+    temporal_pad: Tuple[int, int] = field(default_factory=lambda: (0, 10))
 
     # Training parameters
     batch_size: int = 16
@@ -44,8 +44,8 @@ class TrainingConfig:
     # theta: float = 1e-1  # Temporal kernel regularization
 
     #### Params for fixation videos
-    sigma: float = 1e-4  # Spatial jerk energy (smoothness)
-    gamma: float = 1e-6  # Regularization
+    sigma: float = 1e-3  # Spatial jerk energy (smoothness)
+    gamma: float = 1e-4  # Regularization
     theta: float = 1e-3  # Temporal filter regularization
 
     # Checkpoint loading
@@ -161,7 +161,7 @@ class Trainer:
             print(f"Loaded checkpoint from {checkpoint_path}")
 
         self.dataset = VideoDataset(
-            "data/em_videos.npy",
+            "data/bm_fixation_videos.npy",
             self.config.kernel_size,
             self.config.kernel_length * 2 - 1,
         )
@@ -321,7 +321,7 @@ class Trainer:
         theta = theta if theta is not None else self.config.theta
 
         # Compute losses
-        loss_mse = torch.nn.functional.mse_loss(
+        loss_mse = torch.nn.functional.l1_loss(
             self.current_reconstruction, self.current_target
         )
         # loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()

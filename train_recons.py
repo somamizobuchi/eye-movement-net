@@ -319,7 +319,9 @@ class Trainer:
             alpha, sigma, beta, gamma: Optional override values for the loss weights.
                 If not provided, uses the values from config.
         """
-        retinal_input, target, eye_trace = next(iter(self.data_loader))
+        retinal_input, target, eye_trace, mask, sacc_end_idx = next(
+            iter(self.data_loader)
+        )
 
         self.optimizer.zero_grad()
         out, _ = self.model(retinal_input.clone().to(self.config.device))
@@ -327,14 +329,16 @@ class Trainer:
         # Current
         self.current_target = target
         self.current_reconstruction = []
+        err = 0
         for i in range(out.shape[0]):
-            self.current_reconstruction.append(
-                self.dataset.reconstruct_static_image(
-                    eye_trace[i, :, self.config.kernel_length - 1 :].cpu().numpy(),
-                    out[i].cpu(),
-                    256,
-                )
+            reconstruction = self.dataset.reconstruct_static_image(
+                eye_trace[i, :, sacc_end_idx[i] - 1 :].cpu().numpy(),
+                out[i, sacc_end_idx[i] - self.config.kernel_length :, :].cpu(),
+                256,
             )
+            self.current_reconstruction.append(reconstruction)
+            err += (target[i][mask[i]] - reconstruction[mask[i]]).square().mean()
+
         self.current_reconstruction = torch.stack(self.current_reconstruction).to(
             self.config.device
         )
@@ -345,9 +349,7 @@ class Trainer:
         theta = theta if theta is not None else self.config.theta
 
         # Compute losses
-        loss_mse = torch.nn.functional.mse_loss(
-            self.current_reconstruction, self.current_target
-        )
+        loss_mse = err / out.shape[0]
         # loss_jerk_temporal = alpha * self.model.kernel_temporal_jerk()
         # loss_jerk_spatial = sigma * self.model.kernel_spatial_jerk()
         loss_spatial_variance = sigma * self.model.kernel_variance()
