@@ -34,6 +34,7 @@ class FullModelTrainer:
         temporal_smoothness_weight: Weight for temporal smoothness of velocity decoder
         reconstruction_loss_weight: Weight for reconstruction MSE loss
         kernel_variance_weight: Weight for kernel variance regularization
+        position_loss_weight: Weight for position supervision loss
     """
 
     def __init__(
@@ -51,6 +52,7 @@ class FullModelTrainer:
         temporal_smoothness_weight=1e-3,
         reconstruction_loss_weight=1.0,
         kernel_variance_weight=1e-4,
+        position_loss_weight=0.1,
     ):
         self.model = model
         self.dataloader = dataloader
@@ -63,6 +65,7 @@ class FullModelTrainer:
         self.temporal_smoothness_weight = temporal_smoothness_weight
         self.reconstruction_loss_weight = reconstruction_loss_weight
         self.kernel_variance_weight = kernel_variance_weight
+        self.position_loss_weight = position_loss_weight
         self.learning_rate = learning_rate
 
         # Create checkpoint directory if it doesn't exist
@@ -132,6 +135,21 @@ class FullModelTrainer:
             eye_trace[:, :, self.model.T - 1].transpose(0, 1).transpose(0, 1)
         )  # (batch_size, 2)
 
+        # Get ground truth positions for position supervision
+        # Shape: (batch_size, t_out, 2)
+        t_out = eye_velocities.shape[1]
+        gt_positions = eye_trace[:, :, self.model.T - 1 : self.model.T - 1 + t_out].transpose(1, 2)  # (batch_size, t_out, 2)
+
+        # Integrate predicted velocities to get predicted positions
+        from reconstruct_from_model import integrate_velocities_batch
+        predicted_positions = integrate_velocities_batch(
+            eye_velocities, initial_positions, dt=1.0
+        )  # (batch_size, t_out, 2)
+
+        # Compute position loss (MSE between predicted and ground truth positions)
+        position_loss = ((predicted_positions - gt_positions) ** 2).mean()
+        position_loss = self.position_loss_weight * position_loss
+
         # Reconstruct entire batch at once using optimized function
         canvas_size = target.shape[-2:]
         reconstructed_canvases = reconstruct_batch_optimized(
@@ -184,6 +202,7 @@ class FullModelTrainer:
             + temporal_l2_loss
             + temporal_smoothness_loss
             + kernel_variance_loss
+            + position_loss
         )
 
         # Store losses for logging
@@ -193,6 +212,7 @@ class FullModelTrainer:
             self.current_temporal_l2_loss = temporal_l2_loss.item()
             self.current_temporal_smoothness_loss = temporal_smoothness_loss.item()
             self.current_kernel_variance_loss = kernel_variance_loss.item()
+            self.current_position_loss = position_loss.item()
 
             # Store sample reconstructions for visualization
             self.current_target = target[0].detach().cpu()
@@ -274,6 +294,9 @@ class FullModelTrainer:
         )
         self.writer.add_scalar(
             "Loss/Kernel_Variance", self.current_kernel_variance_loss, iteration + 1
+        )
+        self.writer.add_scalar(
+            "Loss/Position", self.current_position_loss, iteration + 1
         )
 
         # Visualize reconstruction
@@ -448,6 +471,7 @@ class FullModelTrainer:
                 "temporal_smooth": self.temporal_smoothness_weight,
                 "kernel_var": self.kernel_variance_weight,
                 "reconstruction_weight": self.reconstruction_loss_weight,
+                "position_weight": self.position_loss_weight,
             },
             {
                 "hparam/final_loss": final_loss,
