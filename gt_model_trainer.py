@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from FullModel import FullModel
+from GtModel import GtModel
 from reconstruct_from_model import reconstruct_batch_optimized
 import os
 import matplotlib.pyplot as plt
@@ -15,33 +14,16 @@ import numpy as np
 matplotlib.use("Agg")
 
 
-def bending_energy_loss(y):
+class GtModelTrainer:
     """
-    Compute bending energy loss for smoothness regularization.
-
-    Args:
-        y: Tensor of shape (batch, channels, length) representing velocities or positions
-
-    Returns:
-        Scalar loss value
-    """
-    # y: (batch, channels, length)
-    batch_size, n_channels, length = y.shape
-    kernel = torch.tensor([1., -2., 1.], device=y.device).view(1, 1, 3)
-    # Use depthwise convolution (groups=n_channels) to apply kernel to each channel
-    y2 = F.conv1d(y, kernel.expand(n_channels, 1, 3), padding=1, groups=n_channels)
-    # Return mean squared second derivative
-    return (y2 ** 2).mean()
-
-
-class FullModelTrainer:
-    """
-    Trainer class for the FullModel with bifurcated reconstruction.
+    Trainer class for the GtModel with bifurcated reconstruction.
 
     This trainer focuses on reconstruction quality without velocity supervision.
+    The encoder kernels are frozen (biologically-inspired), so no regularization
+    losses are applied to them.
 
     Args:
-        model: The FullModel instance
+        model: The GtModel instance
         dataloader: DataLoader for training data
         learning_rate: Learning rate for optimizer
         device: Device to run training on ('cuda' or 'cpu')
@@ -49,16 +31,8 @@ class FullModelTrainer:
         log_every: Log to tensorboard every n iterations
         save_every: Save model checkpoint every n iterations
         checkpoint_dir: Directory to save model checkpoints
-        l2_spatial_weight: Weight for L2 regularization on spatial kernels
-        l2_temporal_weight: Weight for L2 regularization on temporal kernels
-        temporal_smoothness_weight: Weight for temporal smoothness of velocity decoder
         reconstruction_loss_weight: Weight for reconstruction MSE loss
-        kernel_variance_weight: Weight for kernel variance regularization
         position_loss_weight: Weight for position supervision loss
-        v1_l2_weight: Weight for V1Decoder regularization
-        balanced_losses: List of loss names to use GradNorm balancing on. Valid names:
-            'reconstruction', 'position', 'spatial_l2', 'temporal_l2',
-            'temporal_smoothness', 'kernel_variance', 'v1_l2'. Default: ['reconstruction', 'position']
     """
 
     def __init__(
@@ -67,18 +41,12 @@ class FullModelTrainer:
         dataloader,
         learning_rate=1e-3,
         device="cuda",
-        log_dir="runs/full_model_experiment",
+        log_dir="runs/gt_model_experiment",
         log_every=100,
         save_every=1000,
-        checkpoint_dir="full_model_checkpoints",
-        l2_spatial_weight=1e-3,
-        l2_temporal_weight=1e-2,
-        temporal_smoothness_weight=1e-3,
+        checkpoint_dir="gt_model_checkpoints",
         reconstruction_loss_weight=1.0,
-        kernel_variance_weight=1e-4,
         position_loss_weight=0.1,
-        v1_l2_weight=1e-3,
-        balanced_losses=None,
     ):
         self.model = model
         self.dataloader = dataloader
@@ -86,37 +54,9 @@ class FullModelTrainer:
         self.log_every = log_every
         self.save_every = save_every
         self.checkpoint_dir = checkpoint_dir
-        self.spatial_l2_weight = l2_spatial_weight
-        self.temporal_l2_weight = l2_temporal_weight
-        self.temporal_smoothness_weight = temporal_smoothness_weight
         self.reconstruction_loss_weight = reconstruction_loss_weight
-        self.kernel_variance_weight = kernel_variance_weight
         self.position_loss_weight = position_loss_weight
-        self.v1_l2_weight = v1_l2_weight
         self.learning_rate = learning_rate
-
-        # Configure which losses use GradNorm balancing vs fixed weights
-        if balanced_losses is None:
-            balanced_losses = ["reconstruction", "position"]
-
-        # Validate loss names
-        valid_losses = {
-            "reconstruction",
-            "position",
-            "spatial_l2",
-            "temporal_l2",
-            "temporal_smoothness",
-            "kernel_variance",
-            "v1_l2",
-        }
-        for loss_name in balanced_losses:
-            if loss_name not in valid_losses:
-                raise ValueError(
-                    f"Invalid loss name '{loss_name}'. Valid options: {valid_losses}"
-                )
-
-        self.balanced_losses = set(balanced_losses)
-        self.fixed_losses = valid_losses - self.balanced_losses
 
         # Create checkpoint directory if it doesn't exist
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -124,8 +64,11 @@ class FullModelTrainer:
         # Move model to device
         self.model.to(device)
 
-        # Setup optimizer
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        # Setup optimizer (only for decoder parameters, encoder is frozen)
+        decoder_params = list(self.model.velocity_decoder.parameters()) + list(
+            self.model.recon_decoder.parameters()
+        )
+        self.optimizer = optim.Adam(decoder_params, lr=learning_rate)
 
         # Setup tensorboard writer
         self.writer = SummaryWriter(log_dir)
@@ -173,7 +116,7 @@ class FullModelTrainer:
         }
 
         checkpoint_path = os.path.join(
-            self.checkpoint_dir, f"full_model_checkpoint_iter_{iteration}.pt"
+            self.checkpoint_dir, f"gt_model_checkpoint_iter_{iteration}.pt"
         )
         torch.save(checkpoint, checkpoint_path)
         print(f"Checkpoint saved at iteration {iteration}: {checkpoint_path}")
@@ -208,29 +151,30 @@ class FullModelTrainer:
 
         # Extract initial positions from eye trace for entire batch
         # eye_trace shape: (batch_size, 2, t)
-        # With pad_start = kernel_length * 2 - 2, we need to account for the extra padding
-        # The model receives input with padding, then V1Decoder reduces by (kernel_length - 1)
-        # Initial position should be at pad_start + model.T - 1 - (kernel_length - 1)
-        # = pad_start + model.T - kernel_length
-        pad_start = self.model.T * 2 - 2
-        initial_idx = pad_start + self.model.T - self.model.T
+        # We want position at T-1 (last time step before prediction starts)
         initial_positions = (
-            eye_trace[:, :, initial_idx].transpose(0, 1).transpose(0, 1)
+            eye_trace[:, :, self.model.T - 1].transpose(0, 1).transpose(0, 1)
         )  # (batch_size, 2)
 
         # Get ground truth positions for position supervision
         # Shape: (batch_size, t_out, 2)
         t_out = eye_velocities.shape[1]
-        gt_positions = eye_trace[:, :, initial_idx : initial_idx + t_out].transpose(1, 2)  # (batch_size, t_out, 2)
+        gt_positions = eye_trace[
+            :, :, self.model.T - 1 : self.model.T - 1 + t_out
+        ].transpose(
+            1, 2
+        )  # (batch_size, t_out, 2)
 
         # Integrate predicted velocities to get predicted positions
         from reconstruct_from_model import integrate_velocities_batch
+
         predicted_positions = integrate_velocities_batch(
             eye_velocities, initial_positions, dt=1.0
         )  # (batch_size, t_out, 2)
 
-        # Compute losses (unweighted for GradNorm calculation)
-        position_loss_unweighted = ((predicted_positions - gt_positions) ** 2).mean()
+        # Compute position loss (MSE between predicted and ground truth positions)
+        position_loss = ((predicted_positions - gt_positions) ** 2).mean()
+        position_loss = self.position_loss_weight * position_loss
 
         # Reconstruct entire batch at once using optimized function
         canvas_size = target.shape[-2:]
@@ -252,98 +196,41 @@ class FullModelTrainer:
             squared_error * mask_imgs
             + 5.0 * squared_error * (~mask.unsqueeze(1)).float()
         )
-        reconstruction_loss_unweighted = squared_error.sum() / (mask_imgs.sum() + 1e-8)
+        reconstruction_loss = squared_error.sum() / (mask_imgs.sum() + 1e-8)
+        reconstruction_loss = self.reconstruction_loss_weight * reconstruction_loss
 
-        # Compute L2 regularization loss on spatial kernels
-        spatial_l2 = self.model.encoder.spatial_kernels.square().mean()
+        # GradNorm: Compute gradient norms for each loss to balance contributions
+        # Compute gradients for reconstruction loss
+        recon_loss_unweighted = (
+            reconstruction_loss / self.reconstruction_loss_weight
+        )  # undo weighting
+        recon_grad_norm = self._compute_gradient_norm(recon_loss_unweighted)
 
-        # Compute L2 on the area under temporal kernels (force zero-mean)
-        temporal_l2 = self.model.encoder.temporal_kernels.square().mean()
+        # Compute gradients for position loss
+        pos_loss_unweighted = (
+            position_loss / self.position_loss_weight
+        )  # undo weighting
+        pos_grad_norm = self._compute_gradient_norm(pos_loss_unweighted)
 
-        # Compute bending energy loss on temporal kernels for smoothness
-        # temporal_kernels: (n_channels, kernel_length)
-        # Reshape to (1, n_channels, kernel_length) for conv1d
-        temporal_kernels_for_smoothness = self.model.encoder.temporal_kernels.unsqueeze(0)
-        temporal_smoothness = bending_energy_loss(temporal_kernels_for_smoothness)
+        # Balance weights so gradients contribute equally
+        avg_grad_norm = (recon_grad_norm + pos_grad_norm) / 2.0
 
-        # Compute regularization on V1Decoder weights
-        # L2 regularization on V1 temporal kernels
-        v1_temporal_l2 = self.model.v1_decoder.temporal_kernels.square().mean()
+        # Update weights inversely proportional to gradient magnitude
+        # This ensures both losses contribute equally to the total gradient
+        self.reconstruction_loss_weight = avg_grad_norm / (recon_grad_norm + 1e-8)
+        self.position_loss_weight = avg_grad_norm / (pos_grad_norm + 1e-8)
 
-        # L2 regularization on V1 spatial kernels (linear layer weights)
-        v1_spatial_l2 = self.model.v1_decoder.spatial_kernels.weight.square().mean()
+        # Recompute loss with updated weights
+        reconstruction_loss = self.reconstruction_loss_weight * recon_loss_unweighted
+        position_loss = self.position_loss_weight * pos_loss_unweighted
 
-        # Combine V1 regularization losses
-        v1_l2_loss = v1_temporal_l2 + v1_spatial_l2
-
-        # Compute kernel variance loss to encourage localized kernels
-        kernel_variance_loss_unweighted = self.model.kernel_variance()
-
-        # Dictionary of all unweighted losses
-        unweighted_losses = {
-            "reconstruction": reconstruction_loss_unweighted,
-            "position": position_loss_unweighted,
-            "spatial_l2": spatial_l2,
-            "temporal_l2": temporal_l2,
-            "temporal_smoothness": temporal_smoothness,
-            "kernel_variance": kernel_variance_loss_unweighted,
-            "v1_l2": v1_l2_loss,
-        }
-
-        # GradNorm: Compute gradient norms only for balanced losses
-        if self.balanced_losses:
-            grad_norms = {}
-            for loss_name in self.balanced_losses:
-                grad_norms[loss_name] = self._compute_gradient_norm(
-                    unweighted_losses[loss_name]
-                )
-
-            # Balance weights so gradients contribute equally
-            avg_grad_norm = sum(grad_norms.values()) / len(grad_norms)
-
-            # Update weights inversely proportional to gradient magnitude
-            for loss_name in self.balanced_losses:
-                weight_attr = f"{loss_name}_weight"
-                setattr(
-                    self,
-                    weight_attr,
-                    avg_grad_norm / (grad_norms[loss_name] + 1e-8),
-                )
-
-        # Compute weighted losses
-        weighted_losses = {}
-        for loss_name, unweighted_loss in unweighted_losses.items():
-            weight_attr = f"{loss_name}_weight"
-            weight = getattr(self, weight_attr)
-            weighted_losses[loss_name] = weight * unweighted_loss
-
-        # Extract individual weighted losses for convenience
-        reconstruction_loss = weighted_losses["reconstruction"]
-        position_loss = weighted_losses["position"]
-        spatial_l2_loss = weighted_losses["spatial_l2"]
-        temporal_l2_loss = weighted_losses["temporal_l2"]
-        temporal_smoothness_loss = weighted_losses["temporal_smoothness"]
-        kernel_variance_loss = weighted_losses["kernel_variance"]
-
-        # Total loss
-        loss = (
-            reconstruction_loss
-            + spatial_l2_loss
-            + temporal_l2_loss
-            + temporal_smoothness_loss
-            + kernel_variance_loss
-            + position_loss
-        )
+        # Total loss (no encoder regularization since kernels are frozen)
+        loss = reconstruction_loss + position_loss
 
         # Store losses for logging
         if self.iteration % self.log_every == 0:
-            # Store raw (unweighted) losses
-            self.current_reconstruction_loss = reconstruction_loss_unweighted.item()
-            self.current_position_loss = position_loss_unweighted.item()
-            self.current_spatial_l2_loss = spatial_l2.item()
-            self.current_temporal_l2_loss = temporal_l2.item()
-            self.current_temporal_smoothness_loss = temporal_smoothness.item()
-            self.current_kernel_variance_loss = kernel_variance_loss_unweighted.item()
+            self.current_reconstruction_loss = recon_loss_unweighted.item()
+            self.current_position_loss = pos_loss_unweighted.item()
 
             # Store sample reconstructions for visualization
             self.current_target = target[0].detach().cpu()
@@ -369,12 +256,10 @@ class FullModelTrainer:
 
             # Extract ground truth positions from eye trace
             # eye_trace shape: (batch_size, 2, t)
-            # We need positions starting at initial_idx (same as initial_position) through the output timesteps
+            # We need positions starting at T-1 (same as initial_position) through the output timesteps
             # This ensures gt_positions[0] matches the initial position
-            pad_start = self.model.T * 2 - 2
-            initial_idx = pad_start + self.model.T - self.model.T
             gt_positions = eye_trace[
-                0, :, initial_idx : initial_idx + t_out
+                0, :, self.model.T - 1 : self.model.T - 1 + t_out
             ].T  # (t_out, 2)
 
             # Verify first ground truth position matches initial position
@@ -409,27 +294,13 @@ class FullModelTrainer:
 
     def log_to_tensorboard(self, loss, iteration):
         """Log metrics and visualizations to tensorboard."""
-        # Log scalar losses (raw, unweighted values)
+        # Log scalar losses
         self.writer.add_scalar("Loss/Total", loss, iteration + 1)
         self.writer.add_scalar(
             "Loss/Reconstruction", self.current_reconstruction_loss, iteration + 1
         )
         self.writer.add_scalar(
             "Loss/Position", self.current_position_loss, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Loss/Spatial_L2", self.current_spatial_l2_loss, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Loss/Temporal_L2", self.current_temporal_l2_loss, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Loss/Temporal_Smoothness",
-            self.current_temporal_smoothness_loss,
-            iteration + 1,
-        )
-        self.writer.add_scalar(
-            "Loss/Kernel_Variance", self.current_kernel_variance_loss, iteration + 1
         )
 
         # Log GradNorm loss weights (dynamically adjusted)
@@ -438,18 +309,6 @@ class FullModelTrainer:
         )
         self.writer.add_scalar(
             "Weights/Position", self.position_loss_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Spatial_L2", self.spatial_l2_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Temporal_L2", self.temporal_l2_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Temporal_Smoothness", self.temporal_smoothness_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Kernel_Variance", self.kernel_variance_weight, iteration + 1
         )
 
         # Visualize reconstruction
@@ -584,7 +443,7 @@ class FullModelTrainer:
         self.model.train()
 
         # Training loop with tqdm progress bar
-        pbar = tqdm(range(n_iterations), desc="Training Full Model", unit="iter")
+        pbar = tqdm(range(n_iterations), desc="Training GtModel", unit="iter")
 
         for iteration in pbar:
             self.iteration = iteration + 1
@@ -619,6 +478,8 @@ class FullModelTrainer:
         self.writer.add_hparams(
             {
                 "lr": self.learning_rate,
+                "reconstruction_weight": self.reconstruction_loss_weight,
+                "position_weight": self.position_loss_weight,
             },
             {
                 "hparam/final_loss": final_loss,
@@ -629,7 +490,7 @@ class FullModelTrainer:
 
         # Close tensorboard writer
         self.writer.close()
-        print("Full model training completed!")
+        print("GtModel training completed!")
 
     def close(self):
         """Close tensorboard writer."""

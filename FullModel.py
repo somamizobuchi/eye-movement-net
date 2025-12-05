@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from encoder import Encoder
+from V1Decoder import V1Decoder
 from eye_trace_decoder import TemporalVelocityDecoder
 from recon_decoder import ReconstructionDecoder
 
@@ -28,6 +29,7 @@ class FullModel(nn.Module):
         kernel_delay: int,
         n_channels: int,
         decoder_size: int,
+        velocity_hidden_channels: int | None = None,
         noise_std: float = 0.05,
         max_velocity: float = 10.0,
     ):
@@ -39,6 +41,10 @@ class FullModel(nn.Module):
         self.K = decoder_size
         self.max_velocity = max_velocity
 
+        # Default velocity_hidden_channels to decoder_size if not specified
+        if velocity_hidden_channels is None:
+            velocity_hidden_channels = decoder_size
+
         # Modular encoder for (2+1)D convolution (includes BN and activation)
         self.encoder = Encoder(
             kernel_size=kernel_size,
@@ -48,17 +54,24 @@ class FullModel(nn.Module):
             noise_std=noise_std,
         )
 
+        # V1 decoder - temporal convolution followed by spatial linear transformation
+        self.v1_decoder = V1Decoder(
+            input_dims=n_channels,
+            output_dims=decoder_size,
+            kernel_length=kernel_length,
+        )
+
         # Velocity decoder - predicts eye movements
         self.velocity_decoder = TemporalVelocityDecoder(
-            in_channels=n_channels,
-            hidden_channels=decoder_size,
+            in_channels=decoder_size,
+            hidden_channels=velocity_hidden_channels,
             out_channels=2,
             max_velocity=max_velocity,
         )
 
         # Reconstruction decoder - reconstructs frames
         self.recon_decoder = ReconstructionDecoder(
-            n_channels=n_channels,
+            n_channels=decoder_size,
             kernel_size=kernel_size,
         )
 
@@ -82,11 +95,15 @@ class FullModel(nn.Module):
         # features: (batch_size, J, t-T+1)
         features = self.encoder(x)
 
+        # V1 decoder: temporal convolution then linear transformation per timepoint
+        # v1_features: (batch_size, K, t-T+1)
+        v1_features = self.v1_decoder(features)
+
         # Velocity decoding
-        eye_velocities = self.velocity_decoder(features)  # (batch_size, t_out, 2)
+        eye_velocities = self.velocity_decoder(v1_features)  # (batch_size, t_out, 2)
 
         # Reconstruction decoding
-        reconstructed_frames = self.recon_decoder(features)  # (batch_size, t_out, N, N)
+        reconstructed_frames = self.recon_decoder(v1_features)  # (batch_size, t_out, N, N)
 
         return eye_velocities, reconstructed_frames
 

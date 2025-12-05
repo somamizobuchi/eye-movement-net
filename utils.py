@@ -270,9 +270,8 @@ def implay(seq, interval=20, repeat=False, repeat_delay=-1, save_name: str = Non
 
     plt.show()
 
+
 import numpy as np
-
-
 
 
 # def generate_saccade(amplitude_deg: float, angle_radians: float, fs: int = 1000):
@@ -410,7 +409,7 @@ def accumulate_frames(frames: torch.Tensor, offset_indices: torch.Tensor):
     return reconstructed / frames.shape[0]
 
 
-def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
+def generate_rgc_impulse_response(cell_type="P", num_samples=100, fs=1000):
     """
     Generates the temporal impulse response for a primate retinal ganglion cell.
 
@@ -432,18 +431,18 @@ def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
               representing the combined effect of the center and surround.
     """
     # --- 1. Set Parameters based on Cell Type ---
-    if cell_type.upper() == 'P':
+    if cell_type.upper() == "P":
         # Parameters for P-cells (slower, more sustained response)
         n = 5  # Number of cascaded filter stages
         tau = 5.9 / 1000  # Time constant in seconds (5.9 ms)
-        surround_delay = 3.5 / 1000 # Average surround delay in seconds (3.5 ms)
-        surround_gain = 0.9 # Relative gain of the surround
-    elif cell_type.upper() == 'M':
+        surround_delay = 3.5 / 1000  # Average surround delay in seconds (3.5 ms)
+        surround_gain = 0.9  # Relative gain of the surround
+    elif cell_type.upper() == "M":
         # Parameters for M-cells (faster, more transient response)
         n = 3  # Number of cascaded filter stages
         tau = 4.0 / 1000  # Time constant in seconds (4.0 ms)
-        surround_delay = 3.5 / 1000 # Average surround delay in seconds (3.5 ms)
-        surround_gain = 0.95 # Relative gain of the surround
+        surround_delay = 3.5 / 1000  # Average surround delay in seconds (3.5 ms)
+        surround_gain = 0.95  # Relative gain of the surround
     else:
         raise ValueError("Invalid cell_type. Choose 'P' or 'M'.")
 
@@ -454,8 +453,10 @@ def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
     # --- 3. Calculate Center Impulse Response ---
     # This formula is derived from the gamma distribution, representing the
     # response of n cascaded low-pass filters.
-    center_response = (t / tau)**(n - 1) * np.exp(-t / tau) * (1 / (tau * math.factorial(n - 1)))
-    
+    center_response = (
+        (t / tau) ** (n - 1) * np.exp(-t / tau) * (1 / (tau * math.factorial(n - 1)))
+    )
+
     # Normalize the peak of the center response to 1 for easier interpretation
     if np.max(center_response) > 0:
         center_response /= np.max(center_response)
@@ -465,10 +466,14 @@ def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
     # of the center response.
     t_surround = t - surround_delay
     # Ensure time is not negative for the surround calculation
-    t_surround[t_surround < 0] = 0 
-    
-    surround_response = (t_surround / tau)**(n - 1) * np.exp(-t_surround / tau) * (1 / (tau * math.factorial(n - 1)))
-    
+    t_surround[t_surround < 0] = 0
+
+    surround_response = (
+        (t_surround / tau) ** (n - 1)
+        * np.exp(-t_surround / tau)
+        * (1 / (tau * math.factorial(n - 1)))
+    )
+
     # Normalize and scale by the surround gain
     if np.max(surround_response) > 0:
         surround_response /= np.max(surround_response)
@@ -482,7 +487,9 @@ def generate_rgc_impulse_response(cell_type='P', num_samples=100, fs=1000):
     return t, combined_response
 
 
-def generate_rgc_spatial_rf(cell_type='P', eccentricity=5.0, resolution=100, size_samples=100):
+def generate_rgc_spatial_rf(
+    cell_type="P", eccentricity=5.0, ppd=100.0, size_pixels=100, center=None
+):
     """
     Generates the 2D spatial receptive field for a primate retinal ganglion cell.
 
@@ -494,10 +501,10 @@ def generate_rgc_spatial_rf(cell_type='P', eccentricity=5.0, resolution=100, siz
         cell_type (str): 'P' for Parvocellular or 'M' for Magnocellular.
         eccentricity (float): The distance from the fovea in degrees of visual angle.
                               Affects the size of the receptive field. Defaults to 5.0.
-        resolution (int): The resolution of the grid in samples (pixels) per degree
-                          of visual angle. Defaults to 100.
-        size_samples (int): The total width and height of the spatial grid in samples
-                            (pixels). Defaults to 100.
+        ppd (float): Pixels per degree of visual angle. Defaults to 100.0.
+        size_pixels (int): The total width and height of the spatial grid in pixels. Defaults to 100.
+        center (tuple): Optional (x, y) center coordinate in pixel coordinates as floats. If None,
+                        the grid is centered at (0, 0) in degree space.
 
     Returns:
         tuple: A tuple containing:
@@ -511,38 +518,59 @@ def generate_rgc_spatial_rf(cell_type='P', eccentricity=5.0, resolution=100, siz
     # We use the midpoint of each specific range for interpolation.
     p_cell_data = {
         # Midpoints for ranges: 0-5, 5-10, 10-20, 20-30, 30-40
-        'ecc_mid': np.array([2.5, 7.5, 15, 25, 35]),
-        'rc':      np.array([0.03, 0.05, 0.07, 0.09, 0.15]), # Center radius (deg)
-        'rs':      np.array([0.18, 0.43, 0.54, 0.73, 0.65]), # Surround radius (deg)
+        "ecc_mid": np.array([2.5, 7.5, 15, 25, 35]),
+        "rc": np.array([0.03, 0.05, 0.07, 0.09, 0.15]),  # Center radius (deg)
+        "rs": np.array([0.18, 0.43, 0.54, 0.73, 0.65]),  # Surround radius (deg)
         # Gain ratio is calculated from median Kc and Ks values (Ks/Kc)
-        'gain_ratio': np.array([4.4/325.2, 0.7/114.7, 0.6/77.8, 0.8/57.2, 1.1/18.6])
+        "gain_ratio": np.array(
+            [4.4 / 325.2, 0.7 / 114.7, 0.6 / 77.8, 0.8 / 57.2, 1.1 / 18.6]
+        ),
     }
     m_cell_data = {
         # Midpoints for ranges: 0-10, 10-20, 20-30
-        'ecc_mid': np.array([5, 15, 25]),
-        'rc':      np.array([0.10, 0.18, 0.23]),
-        'rs':      np.array([0.72, 1.19, 0.58]),
-        'gain_ratio': np.array([1.1/148.0, 2.0/115.0, 1.6/63.8])
+        "ecc_mid": np.array([5, 15, 25]),
+        "rc": np.array([0.10, 0.18, 0.23]),
+        "rs": np.array([0.72, 1.19, 0.58]),
+        "gain_ratio": np.array([1.1 / 148.0, 2.0 / 115.0, 1.6 / 63.8]),
     }
 
-    if cell_type.upper() == 'P':
+    if cell_type.upper() == "P":
         data = p_cell_data
-    elif cell_type.upper() == 'M':
+    elif cell_type.upper() == "M":
         data = m_cell_data
     else:
         raise ValueError("Invalid cell_type. Choose 'P' or 'M'.")
 
     # 2. Calculate RF parameters by interpolating from the lookup table
     # sigma_c and sigma_s are the standard deviations of the Gaussians, equivalent to rc and rs
-    sigma_c = np.interp(eccentricity, data['ecc_mid'], data['rc'])
-    sigma_s = np.interp(eccentricity, data['ecc_mid'], data['rs'])
-    surround_gain = np.interp(eccentricity, data['ecc_mid'], data['gain_ratio'])
+    sigma_c = np.interp(eccentricity, data["ecc_mid"], data["rc"])
+    sigma_s = np.interp(eccentricity, data["ecc_mid"], data["rs"])
+    surround_gain = np.interp(eccentricity, data["ecc_mid"], data["gain_ratio"])
 
-    # 3. Create the 2D spatial grid based on resolution and sample size
-    degrees = size_samples / resolution
+    # 3. Create the 2D spatial grid based on ppd and size_pixels
+    degrees = size_pixels / ppd
     half_degrees = degrees / 2
-    x = np.linspace(-half_degrees, half_degrees, size_samples)
-    y = np.linspace(-half_degrees, half_degrees, size_samples)
+
+    if center is None:
+        # Default: center at (0, 0) in degree space
+        x = np.linspace(-half_degrees, half_degrees, size_pixels)
+        y = np.linspace(-half_degrees, half_degrees, size_pixels)
+    else:
+        # Center at the provided pixel coordinate within the frame
+        # Convert pixel frame (0 to size_pixels) to degree space centered at the given pixel position
+        # The frame spans from 0 to size_pixels pixels, centered at (size_pixels/2, size_pixels/2) in frame coords
+        # We want the RF centered at the given (cx, cy) pixel location within this frame
+        center_x_pix = center[0]  # pixel coordinate within frame
+        center_y_pix = center[1]  # pixel coordinate within frame
+
+        # Convert frame pixel coordinates to degree space
+        # Map pixel range [0, size_pixels] to degree range [-half_degrees, half_degrees]
+        center_x_deg = (center_x_pix - size_pixels / 2) / ppd
+        center_y_deg = (center_y_pix - size_pixels / 2) / ppd
+
+        x = np.linspace(center_x_deg - half_degrees, center_x_deg + half_degrees, size_pixels)
+        y = np.linspace(center_y_deg - half_degrees, center_y_deg + half_degrees, size_pixels)
+
     x_grid, y_grid = np.meshgrid(x, y)
 
     # 4. Calculate the Center and Surround Gaussian profiles
@@ -554,3 +582,45 @@ def generate_rgc_spatial_rf(cell_type='P', eccentricity=5.0, resolution=100, siz
     rf = center_gauss - surround_gain * surround_gauss
 
     return x_grid, y_grid, rf
+
+
+import torch
+
+
+def hex_grid_torch(width: float, height: float, spacing: float, device="cpu"):
+    """
+    Vectorized hexagonal grid generation using PyTorch.
+
+    width, height: rectangular region size
+    spacing: center-to-center horizontal spacing
+    Returns Nx2 tensor of (x, y) coordinates
+    """
+
+    dx = spacing
+    dy = spacing * (3**0.5) / 2  # vertical pitch
+
+    # --- 1. Compute y-coordinates for all rows ---
+    # Number of rows needed
+    n_rows = int(height // dy) + 2
+    ys = torch.arange(n_rows, device=device, dtype=torch.float32) * dy
+
+    # --- 2. Maximum number of points per row ---
+    n_cols = int(width // dx) + 2
+    xs = torch.arange(n_cols, device=device, dtype=torch.float32) * dx
+
+    # --- 3. Make full grid (rows × columns) ---
+    Y, X = torch.meshgrid(ys, xs, indexing="ij")
+
+    # --- 4. Apply row-wise staggering: odd rows shift by dx/2 ---
+    row_offsets = ((torch.arange(n_rows, device=device) % 2) * (dx / 2)).unsqueeze(
+        1
+    )  # (n_rows,1)
+    X = X + row_offsets  # broadcast shift
+
+    # --- 5. Mask points outside the rectangle ---
+    mask = (X >= 0) & (X <= width) & (Y >= 0) & (Y <= height)
+
+    # --- 6. Stack valid points ---
+    pts = torch.stack((X[mask], Y[mask]), dim=1)
+
+    return pts

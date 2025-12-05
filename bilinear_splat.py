@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 
-def bilinear_splat(I, offsets, canvas_size):
+def bilinear_splat(I, offsets, canvas_size, normalize=True):
     """
     Bilinear splatting of small image(s) I into a larger canvas.
 
@@ -20,6 +20,7 @@ def bilinear_splat(I, offsets, canvas_size):
         I: Tensor (N, H, W) or (N, 1, H, W) — local grayscale images
         offsets: Tensor (N, 2) — global (x, y) float offsets for each image
         canvas_size: tuple (Hc, Wc) — size of the output canvas
+        normalize: bool — whether to normalize by accumulated weights (default: True)
 
     Returns:
         G: Tensor (1, 1, Hc, Wc) — reconstructed global canvas
@@ -27,7 +28,7 @@ def bilinear_splat(I, offsets, canvas_size):
     Notes:
         - Offsets are in (x, y) format where x is horizontal, y is vertical
         - Uses bilinear weights to distribute each pixel to 4 neighbors
-        - Automatically normalizes overlapping regions
+        - Automatically normalizes overlapping regions if normalize=True
         - Fully differentiable for end-to-end training
     """
     # Handle both (N, H, W) and (N, 1, H, W) inputs
@@ -46,8 +47,8 @@ def bilinear_splat(I, offsets, canvas_size):
 
     # Create meshgrid once (more efficient)
     y_local, x_local = torch.meshgrid(
-        torch.arange(H, device=device, dtype=torch.float32),
-        torch.arange(W, device=device, dtype=torch.float32),
+        torch.arange(H, device=device, dtype=I.dtype),
+        torch.arange(W, device=device, dtype=I.dtype),
         indexing="ij",
     )
 
@@ -96,12 +97,13 @@ def bilinear_splat(I, offsets, canvas_size):
 
     # Normalize by accumulated weights to handle overlaps
     # Add epsilon to avoid division by zero
-    G = G / (Wsum + 1e-8)
+    if normalize:
+        G = G / (Wsum + 1e-8)
 
     return G
 
 
-def bilinear_splat_batch(I, offsets, canvas_size):
+def bilinear_splat_batch(I, offsets, canvas_size, normalize=True):
     """
     Batch version of bilinear splatting (more efficient for large N).
 
@@ -109,6 +111,7 @@ def bilinear_splat_batch(I, offsets, canvas_size):
         I: Tensor (N, H, W) or (N, 1, H, W) — local grayscale images
         offsets: Tensor (N, 2) — global (x, y) float offsets
         canvas_size: tuple (Hc, Wc) — size of output canvas
+        normalize: bool — whether to normalize by accumulated weights (default: True)
 
     Returns:
         G: Tensor (1, 1, Hc, Wc) — reconstructed global canvas
@@ -129,8 +132,8 @@ def bilinear_splat_batch(I, offsets, canvas_size):
 
     # Create meshgrid: (H, W)
     y_local, x_local = torch.meshgrid(
-        torch.arange(H, device=device, dtype=torch.float32),
-        torch.arange(W, device=device, dtype=torch.float32),
+        torch.arange(H, device=device, dtype=I.dtype),
+        torch.arange(W, device=device, dtype=I.dtype),
         indexing="ij",
     )
 
@@ -170,8 +173,9 @@ def bilinear_splat_batch(I, offsets, canvas_size):
         contrib_flat = contribution.flatten()
         w_flat = w_val.flatten()
 
-        # Only accumulate valid positions
-        mask = (y_flat >= 0) & (y_flat < Hc) & (x_flat >= 0) & (x_flat < Wc)
+        # Only accumulate positions where valid mask is true
+        # (bounds checking already handled by valid mask above)
+        mask = w_flat != 0
 
         if mask.any():
             G[0, 0].index_put_(
@@ -181,11 +185,14 @@ def bilinear_splat_batch(I, offsets, canvas_size):
                 (y_flat[mask], x_flat[mask]), w_flat[mask], accumulate=True
             )
 
-    # G = G / (Wsum + 1e-8)
+    # Normalize by accumulated weights to handle overlaps
+    if normalize:
+        G = G / (Wsum + 1e-8)
+
     return G
 
 
-def bilinear_splat_training_batch(I, offsets, canvas_size):
+def bilinear_splat_training_batch(I, offsets, canvas_size, normalize=False):
     """
     Fully batched bilinear splatting for training batches.
 
@@ -196,6 +203,7 @@ def bilinear_splat_training_batch(I, offsets, canvas_size):
         I: Tensor (B, T, H, W) — batch of temporal sequences of local images
         offsets: Tensor (B, T, 2) — global (x, y) float offsets for each frame
         canvas_size: tuple (Hc, Wc) — size of output canvas
+        normalize: bool — whether to normalize by accumulated weights (default: True)
 
     Returns:
         G: Tensor (B, 1, Hc, Wc) — reconstructed global canvas for each batch item
@@ -217,8 +225,8 @@ def bilinear_splat_training_batch(I, offsets, canvas_size):
 
     # Create meshgrid once for efficiency: (H, W)
     y_local, x_local = torch.meshgrid(
-        torch.arange(H, device=device, dtype=torch.float32),
-        torch.arange(W, device=device, dtype=torch.float32),
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
         indexing="ij",
     )
 
@@ -283,7 +291,8 @@ def bilinear_splat_training_batch(I, offsets, canvas_size):
     G_batch = G_flat.view(B, Hc, Wc).unsqueeze(1)
     Wsum_batch = Wsum_flat.view(B, Hc, Wc).unsqueeze(1)
 
-    # Normalize by accumulated weights
-    # G_batch = G_batch / (Wsum_batch + 1e-8)
+    # Normalize by accumulated weights to handle overlaps
+    if normalize:
+        G_batch = G_batch / (Wsum_batch + 1e-8)
 
     return G_batch

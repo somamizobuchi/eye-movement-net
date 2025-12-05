@@ -32,7 +32,8 @@ def test_full_model():
     decoder_size = 64
     batch_size = 4
     img_size = 256
-    total_samples = 128  # Number of input frames
+    pad_start = kernel_length * 2 - 2
+    total_samples = 32 + pad_start  # Number of input frames (drift_samples + padding)
 
     print("\nModel Configuration:")
     print(f"  Kernel size: {kernel_size}x{kernel_size}")
@@ -88,7 +89,9 @@ def test_full_model():
         eye_velocities, reconstructed_frames = model(retinal_input)
 
     # Expected output time dimension
-    t_out = total_samples - kernel_length + 1
+    # Encoder reduces by (kernel_length - 1), V1Decoder reduces by another (kernel_length - 1)
+    # So total reduction is 2*(kernel_length - 1) = 2*kernel_length - 2
+    t_out = total_samples - (2 * kernel_length - 2)
 
     print(f"  Eye velocities shape: {eye_velocities.shape}")
     print(f"    Expected: ({batch_size}, {t_out}, 2)")
