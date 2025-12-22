@@ -59,6 +59,7 @@ class FullModel(nn.Module):
             input_dims=n_channels,
             output_dims=decoder_size,
             kernel_length=kernel_length,
+            kernel_delay=kernel_delay,
         )
 
         # Velocity decoder - predicts eye movements

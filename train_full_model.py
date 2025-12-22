@@ -25,8 +25,8 @@ def main():
     kernel_length = 20  # Temporal kernel length
     kernel_delay = 1  # Temporal kernel delay
     n_channels = 64  # Number of spatiotemporal channels
-    decoder_size = 64  # Intermediate decoder size
-    velocity_hidden_channels = 32  # Hidden channels for velocity decoder
+    decoder_size = 400  # Intermediate decoder size
+    velocity_hidden_channels = 64  # Hidden channels for velocity decoder
     pad_start = kernel_length * 2 - 2
     total_samples = drift_samples + pad_start
 
@@ -38,7 +38,8 @@ def main():
     l2_temporal_weight = 1e-2
     temporal_smoothness_weight = 1e-3
     kernel_variance_weight = 1e-4
-    reconstruction_loss_weight = 1e2
+    reconstruction_loss_weight = 1.0
+    position_loss_weight = 1.0
 
     # Create dataset
     print("Creating dataset...")
@@ -90,6 +91,7 @@ def main():
         temporal_smoothness_weight=temporal_smoothness_weight,
         kernel_variance_weight=kernel_variance_weight,
         reconstruction_loss_weight=reconstruction_loss_weight,
+        position_loss_weight=position_loss_weight,
         balanced_losses=[
             "reconstruction",
             "position",

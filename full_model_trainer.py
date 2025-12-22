@@ -247,11 +247,11 @@ class FullModelTrainer:
         mask_imgs = mask.unsqueeze(1).float()  # (batch_size, 1, Hc, Wc)
 
         # Compute loss with mask
-        squared_error = (reconstructed_canvases - target_imgs) ** 2
-        squared_error = (
-            squared_error * mask_imgs
-            + 5.0 * squared_error * (~mask.unsqueeze(1)).float()
-        )
+        squared_error = torch.abs(reconstructed_canvases - target_imgs)
+        # squared_error = (
+        #     squared_error * mask_imgs
+        #     + 5.0 * squared_error * (~mask.unsqueeze(1)).float()
+        # )
         reconstruction_loss_unweighted = squared_error.sum() / (mask_imgs.sum() + 1e-8)
 
         # Compute L2 regularization loss on spatial kernels
@@ -432,25 +432,21 @@ class FullModelTrainer:
             "Loss/Kernel_Variance", self.current_kernel_variance_loss, iteration + 1
         )
 
-        # Log GradNorm loss weights (dynamically adjusted)
-        self.writer.add_scalar(
-            "Weights/Reconstruction", self.reconstruction_loss_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Position", self.position_loss_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Spatial_L2", self.spatial_l2_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Temporal_L2", self.temporal_l2_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Temporal_Smoothness", self.temporal_smoothness_weight, iteration + 1
-        )
-        self.writer.add_scalar(
-            "Weights/Kernel_Variance", self.kernel_variance_weight, iteration + 1
-        )
+        # Log GradNorm loss weights (dynamically adjusted for balanced losses)
+        for loss_name in self.balanced_losses:
+            weight_attr = f"{loss_name}_weight"
+            weight = getattr(self, weight_attr)
+            self.writer.add_scalar(
+                f"Weights/{loss_name.replace('_', ' ').title()}", weight, iteration + 1
+            )
+
+        # Log fixed loss weights (not adjusted by GradNorm)
+        for loss_name in self.fixed_losses:
+            weight_attr = f"{loss_name}_weight"
+            weight = getattr(self, weight_attr)
+            self.writer.add_scalar(
+                f"Weights/{loss_name.replace('_', ' ').title()}", weight, iteration + 1
+            )
 
         # Visualize reconstruction
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -489,7 +485,7 @@ class FullModelTrainer:
             dataformats="NCHW",
         )
 
-        # Log temporal kernels
+        # Log encoder temporal kernels
         temporal_kernels = self.model.get_temporal_kernels().detach().cpu()
         temporal_kernels = torch.fliplr(temporal_kernels)  # conv1d calculates xcorr
 
@@ -507,12 +503,38 @@ class FullModelTrainer:
 
         ax.set_xlabel("Time Step")
         ax.set_ylabel("Kernel Value")
-        ax.set_title(f"Temporal Kernels (showing {n_plot}/{temporal_kernels.shape[0]})")
+        ax.set_title(f"Encoder Temporal Kernels (showing {n_plot}/{temporal_kernels.shape[0]})")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
         plt.tight_layout()
 
-        self.writer.add_figure("Kernels/Temporal", fig, global_step=iteration + 1)
+        self.writer.add_figure("Kernels/Temporal_Encoder", fig, global_step=iteration + 1)
+        plt.close(fig)
+
+        # Log V1 decoder temporal kernels (with delay padding)
+        v1_temporal_kernels = self.model.v1_decoder.get_temporal_kernels().detach().cpu()
+        v1_temporal_kernels = torch.fliplr(v1_temporal_kernels)  # conv1d calculates xcorr
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot subset of kernels to avoid clutter
+        n_plot_v1 = min(10, v1_temporal_kernels.shape[0])
+        for j in range(n_plot_v1):
+            ax.plot(
+                v1_temporal_kernels[j, :].numpy(),
+                label=f"Kernel {j}",
+                linewidth=2,
+                alpha=0.7,
+            )
+
+        ax.set_xlabel("Time Step")
+        ax.set_ylabel("Kernel Value")
+        ax.set_title(f"V1 Decoder Temporal Kernels (showing {n_plot_v1}/{v1_temporal_kernels.shape[0]})")
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+        plt.tight_layout()
+
+        self.writer.add_figure("Kernels/Temporal_V1Decoder", fig, global_step=iteration + 1)
         plt.close(fig)
 
         # Log position comparison
